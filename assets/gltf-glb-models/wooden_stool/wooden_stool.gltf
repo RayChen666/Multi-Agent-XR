@@ -1,0 +1,197 @@
+{
+    "asset" : {
+        "generator" : "Khronos glTF Blender I/O v3.4.50",
+        "version" : "2.0"
+    },
+    "scene" : 0,
+    "scenes" : [
+        {
+            "name" : "Scene",
+            "nodes" : [
+                1
+            ]
+        }
+    ],
+    "nodes" : [
+        {
+            "mesh" : 0,
+            "name" : "wooden_stool",
+            "translation" : [
+                0,
+                30.12647247314453,
+                0
+            ]
+        },
+        {
+            "children" : [
+                0
+            ],
+            "name" : "wooden_stool_grp"
+        }
+    ],
+    "materials" : [
+        {
+            "doubleSided" : true,
+            "name" : "wooden_stool_mat.001",
+            "normalTexture" : {
+                "index" : 0
+            },
+            "pbrMetallicRoughness" : {
+                "baseColorTexture" : {
+                    "index" : 1
+                },
+                "metallicRoughnessTexture" : {
+                    "index" : 2
+                }
+            }
+        }
+    ],
+    "meshes" : [
+        {
+            "name" : "Mesh",
+            "primitives" : [
+                {
+                    "attributes" : {
+                        "COLOR_0" : 0,
+                        "POSITION" : 1,
+                        "TEXCOORD_0" : 2,
+                        "TEXCOORD_1" : 3,
+                        "NORMAL" : 4
+                    },
+                    "indices" : 5,
+                    "material" : 0
+                }
+            ]
+        }
+    ],
+    "textures" : [
+        {
+            "sampler" : 0,
+            "source" : 0
+        },
+        {
+            "sampler" : 0,
+            "source" : 1
+        },
+        {
+            "sampler" : 0,
+            "source" : 2
+        }
+    ],
+    "images" : [
+        {
+            "mimeType" : "image/png",
+            "name" : "wooden_stool_Normal",
+            "uri" : "wooden_stool_Normal.png"
+        },
+        {
+            "mimeType" : "image/png",
+            "name" : "wooden_stool_mat_bcolor",
+            "uri" : "wooden_stool_mat_bcolor.png"
+        },
+        {
+            "mimeType" : "image/png",
+            "name" : "wooden_stool_Metallic-wooden_stool_Roughness",
+            "uri" : "wooden_stool_Metallic-wooden_stool_Roughness.png"
+        }
+    ],
+    "accessors" : [
+        {
+            "bufferView" : 0,
+            "componentType" : 5123,
+            "count" : 2802,
+            "normalized" : true,
+            "type" : "VEC4"
+        },
+        {
+            "bufferView" : 1,
+            "componentType" : 5126,
+            "count" : 2802,
+            "max" : [
+                20.22191619873047,
+                30.12647247314453,
+                20.22191619873047
+            ],
+            "min" : [
+                -20.22191619873047,
+                -30.12647247314453,
+                -20.22191619873047
+            ],
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 2,
+            "componentType" : 5126,
+            "count" : 2802,
+            "type" : "VEC2"
+        },
+        {
+            "bufferView" : 3,
+            "componentType" : 5126,
+            "count" : 2802,
+            "type" : "VEC2"
+        },
+        {
+            "bufferView" : 4,
+            "componentType" : 5126,
+            "count" : 2802,
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 5,
+            "componentType" : 5123,
+            "count" : 4236,
+            "type" : "SCALAR"
+        }
+    ],
+    "bufferViews" : [
+        {
+            "buffer" : 0,
+            "byteLength" : 22416,
+            "byteOffset" : 0,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 33624,
+            "byteOffset" : 22416,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 22416,
+            "byteOffset" : 56040,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 22416,
+            "byteOffset" : 78456,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 33624,
+            "byteOffset" : 100872,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 8472,
+            "byteOffset" : 134496,
+            "target" : 34963
+        }
+    ],
+    "samplers" : [
+        {
+            "magFilter" : 9729,
+            "minFilter" : 9987
+        }
+    ],
+    "buffers" : [
+        {
+            "byteLength" : 142968,
+            "uri" : "wooden_stool.bin"
+        }
+    ]
+}
