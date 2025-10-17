@@ -10,12 +10,7 @@ const commonConfig = {
     devtool: 'source-map',
     module: {
       rules: [
-        // Add any shared loaders here
-        {
-          test: /\.jsx?$/,
-          exclude: /node_modules/,
-          use: 'babel-loader'
-        }
+        // Add any shared loaders here }
       ]
     },
     resolve: {
@@ -60,6 +55,13 @@ const frontendConfig = {
         filename: 'index.html',
         chunks: ['index']
       }),
+
+      new CopyPlugin({
+        patterns: [
+          { from: 'src/assets', to: 'assets' },
+        ],
+      }),
+      
     ],
     devServer: {
       static: {
