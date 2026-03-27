@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any
 #   Images live in: webXR/assets/reference_layouts/<room_type>.jpg
 # ============================================================================
 
-class MemoryAgent:
+class Memory:
 
     """
         This memory-specific agent is for complex route only
@@ -78,7 +78,7 @@ class MemoryAgent:
     """
 
     def __init__(self, assets_base_path: str = None):
-        genai.configure(api_key='AIzaSyC1oTPSi3cjstRY3FCGr1byEOnOnWxWpUE')
+        genai.configure(api_key='Your-API-Key')
         self.model = genai.GenerativeModel('gemini-2.5-flash')
 
         if assets_base_path is None:
@@ -87,7 +87,7 @@ class MemoryAgent:
         else:
             self.assets_base = Path(assets_base_path)
         
-        print("🧠 MemoryAgent initialized")
+        print("🧠 Memory module initialized")
         print(f"   Assets base: {self.assets_base}")
 
     # =========================================================================
