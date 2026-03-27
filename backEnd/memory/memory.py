@@ -78,7 +78,7 @@ class Memory:
     """
 
     def __init__(self, assets_base_path: str = None):
-        genai.configure(api_key='Your-API-Key')
+        genai.configure(api_key='API-Key')
         self.model = genai.GenerativeModel('gemini-2.5-flash')
 
         if assets_base_path is None:
@@ -111,3 +111,63 @@ class Memory:
         print("\n🧠 MemoryAgent: starting complex-route reasoning...")
         original_prompt = parsed_command.get("original_prompt", "")
         intent_summary  = parsed_command.get("intent_summary", original_prompt)
+
+        # Stage 1: Extract target room type from intent summary
+        target_room_type = self._detect_target_room_type(
+            original_prompt, intent_summary
+        )
+        print(f"   Target room type detected: '{target_room_type}'")
+
+        # Stage 2: Load reference image for that room type
+        image_part = self._load_reference_image(target_room_type)
+        if image_part:
+            print(f"   ✅  Reference image loaded for room type '{target_room_type}'")
+
+        else:
+            print(f"   ⚠️  No reference image found — using parametric LLM knowledge only")
+
+        # Stage 3: semantic layout from image + room type
+        semantic_layout = self._reason_semantic_layout(
+            target_room_type, image_part, original_prompt
+        )
+        if not semantic_layout:
+            print(f"   ❌  Semantic layout reasoning failed")
+            return None
+        
+        print(f"   ✅ Semantic layout: anchor='{semantic_layout.get('anchor_object')}'")
+
+
+        # Stage 4: delta plan from comparing current scene to target layout
+        delta_plan, spatial_constraints = self._reason_delta_plan(
+            target_room_type,
+            semantic_layout,
+            scene_state,
+            original_prompt
+        )
+        if not delta_plan:
+            print("   ❌ Delta plan reasoning failed")
+            return None
+        print(f"   ✅ Delta plan: keep={len(delta_plan.get('keep', []))}, "
+              f"remove={len(delta_plan.get('remove', []))}, "
+              f"add={len(delta_plan.get('add', []))}")
+        
+        # Stage 5: unify memory context for asset and scene agents
+        memory_context = {
+            "target_room_type":   target_room_type,
+            "semantic_layout":   semantic_layout,
+            "delta_plan":        delta_plan,
+            "spatial_constraints_from_current_scene": spatial_constraints,
+            "layout_rationale":   semantic_layout.get("layout_rationale", ""),
+        }
+
+
+
+        # Rewrite parsed_command so the downstream Asset Agent sees the right
+        # objects and quantities (instead of the original vague command).
+
+        self._patch_parsed_command_for_asset_agent(parsed_command, delta_plan)
+
+        print("   ✅ MemoryAgent complete — memory_context ready\n")
+
+
+        return memory_context
