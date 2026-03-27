@@ -1,5 +1,3 @@
-import json
-import google.generativeai as genai
 '''
 class LanguageAgent:
     def __init__(self):
@@ -383,10 +381,14 @@ if __name__ == "__main__":
         print(f"\n📦 Output:")
         print(json.dumps(result, indent=2))
 '''
+
+import json
+import google.generativeai as genai
+
 class LanguageAgent:
     def __init__(self):
         # Configure Gemini API
-        genai.configure(api_key='API key')
+        genai.configure(api_key='AIzaSyC1oTPSi3cjstRY3FCGr1byEOnOnWxWpUE')
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
     def parse_prompt(self, 

@@ -15,6 +15,7 @@ from __init__ import LanguageAgent, SceneAgent, AssetAgent, CodeAgent, Verificat
 from database import Database
 from state import MASState
 from backEnd.memory.conversationManager import ConversationManager
+from backEnd.memory.memoryAgent import MemoryAgent
 
 class Orchestrator:
     """

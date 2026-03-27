@@ -6,3 +6,4 @@ from agents.sceneAgent import SceneAgent
 from agents.assetAgent import AssetAgent
 from agents.codeAgent import CodeAgent
 from agents.verificationAgent import VerificationAgent
+from memory.memoryAgent import MemoryAgent
