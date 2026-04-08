@@ -17,7 +17,7 @@ class SceneAgent:
     """
     def __init__(self, use_llm_reasoning=True):
         # Google Gemini Studio initialize
-        genai.configure(api_key='API-Key')
+        genai.configure(api_key='...')
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
         self.use_llm_reasoning = use_llm_reasoning
 

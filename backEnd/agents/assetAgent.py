@@ -39,7 +39,7 @@ class AssetAgent:
         else:
             self.assets_path = Path(assets_path)
 
-        genai.configure(api_key='API-Key')
+        genai.configure(api_key='...')
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
         self.database = database

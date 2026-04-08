@@ -11,6 +11,11 @@ from typing import Dict, List, Optional, Any
 #   Images live in: webXR/assets/reference_layouts/<room_type>.jpg
 # ============================================================================
 
+REFERENCE_IMAGE_LIBRARY = {
+    "office":       "reference_layouts/office.jpg",
+    "bedroom":      "reference_layouts/bedroom.jpg",
+}
+
 class Memory:
 
     """
@@ -78,7 +83,7 @@ class Memory:
     """
 
     def __init__(self, assets_base_path: str = None):
-        genai.configure(api_key='API-Key')
+        genai.configure(api_key='...')
         self.model = genai.GenerativeModel('gemini-2.5-flash')
 
         if assets_base_path is None:
@@ -171,3 +176,93 @@ class Memory:
 
 
         return memory_context
+    
+
+
+
+    # Stage 1: Detect target room type
+    def _detect_target_room_type(self,
+                                  original_prompt: str,
+                                  intent_summary: str) -> str:
+        """
+        Extract the target room type from the user's command using the LLM.
+        Falls back to keyword matching if the LLM call fails.
+        """
+        prompt = f"""You are a room-type classifier.
+ 
+        Given the user command below, identify the TARGET room type the user wants to
+        convert or create. Reply with ONLY the room type as a lowercase string from
+        this list:
+        office, bedroom, living room, dining room, kitchen, studio, library, gym
+        
+        If none match, reply: unknown
+        
+        User command: "{original_prompt}"
+        Intent: "{intent_summary}"
+        
+        Reply with exactly one room type string, nothing else."""
+
+        try:
+            response = self.model.generate_content (
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.0,
+                    max_output_tokens=20,
+                    )
+                )
+            room_type = response.text.strip().lower()
+            if room_type in REFERENCE_IMAGE_LIBRARY:
+                return room_type
+        
+        # failure report
+        except Exception as e:
+            print(f"   ⚠️  Room-type LLM call failed: {e}")
+
+        # Fallback reasoning (case without LLM involvement)
+        text = (original_prompt + " " + intent_summary).lower()
+        for room_type in REFERENCE_IMAGE_LIBRARY:
+            if room_type in text:
+                return room_type
+        return "unknown"
+    
+
+
+
+    # Stage 2: load reference image
+    def _load_reference_image(self, room_type: str) -> Optional[Dict]:
+        """
+        Load the reference image for the target room type.
+        Returns a Gemini-compatible inline_data part, or None if not found.
+        """
+
+
+        relative_path = REFERENCE_IMAGE_LIBRARY.get(room_type)
+        if not relative_path:
+            return None
+        
+        image_path = self.assets_base / relative_path
+        if not image_path.exists():
+            print(f"   ⚠️  Reference image not found at: {image_path}")
+            return None
+        
+        try:
+            with open(image_path, "rb") as f:
+                image_bytes = f.read()
+            
+            ext = image_path.suffix.lower()
+            mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                        ".png": "image/png",  ".webp": "image/webp"}
+            mime_type = mime_map.get(ext, "image/jpeg")
+
+            return {
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64.b64encode(image_bytes).decode("utf-8")
+                }
+            }
+        except Exception as e:
+            print(f"   ⚠️  Failed to load reference image: {e}")
+            return None
+        
+
+        # Stage 3: Part A: semantic layout reasoning
