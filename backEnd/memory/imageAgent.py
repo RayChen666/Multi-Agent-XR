@@ -35,8 +35,8 @@ class ImageAgent:
             assets_base_path: Absolute path to the webXR/assets directory.
                               Defaults to ../../webXR/assets relative to this file.
         """
-        genai.configure(api_key='API_KEY_HERE')
-        self.model = genai.GenerativeModel('gemini-1.5-flash-lite')
+        genai.configure(api_key='API-key-here')
+        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
         if assets_base_path is None:
             repo_root = Path(__file__).resolve().parents[2]
@@ -147,6 +147,7 @@ class ImageAgent:
             f"{room_type} layouts to infer the spatial structure."
         )
 
+        # This prompt content needs to be adjusted further
         text_prompt = f"""You are a semantic layout analyst for 3D interior spaces.
 
         Your task: extract the SPATIAL SEMANTIC STRUCTURE of a {room_type}. as a 
@@ -168,10 +169,104 @@ class ImageAgent:
         Also identify:
             - "anchor_object"    : the dominant furniture piece that anchors the room
             - "anchor_placement" : where the anchor sits relative to the room
-            - "room_function"    : short phrase describing the primary activity
-            - "layout_rationale" : one sentence explaining why this arrangement makes functional sense
 
         Output ONLY valid JSON — no markdown fences, no extra text:
 
-        {{}}
-        """
+        {{
+            "anchor_object":    "<dominant furniture piece>",
+            "anchor_placement": "<e.g. against_longest_wall | center | corner>",
+            "layout_graph": {{
+                "nodes": ["<object>", "<object>", "back_wall", "left_wall", ...],
+                "edges": [
+                    {{
+                        "from":     "<object>",
+                        "to":       "<object or wall>",
+                        "relation": "<relation>",
+                        "side":     "<north|south|east|west>"
+                    }},
+                    {{
+                        "from":     "<object>",
+                        "to":       "<corner>",
+                        "relation": "at_corner",
+                        "corner":   "<back_right|front_left|back_left|front_right>"
+                    }}
+                ]
+            }}
+            
+        }}
+
+        Example for a living room:
+        {{
+            "anchor_object":    "sofa",
+            "anchor_placement": "against_longest_wall",
+            "layout_graph": {{
+                "nodes": ["sofa", "coffee_table", "tv_stand", "lamp", "back_wall", "left_wall"],
+                "edges": [
+                    {{"from": "sofa",         "to": "back_wall",    "relation": "next_to",  "side": "north"}},
+                    {{"from": "coffee_table", "to": "sofa",         "relation": "close_to", "side": "south"}},
+                    {{"from": "tv_stand",     "to": "sofa",         "relation": "facing",   "side": "south"}},
+                    {{"from": "lamp",         "to": "back_wall",    "relation": "at_corner", "corner": "back_right"}}
+                ]
+            }}
+        }}
+        Now extract the layout graph for a {room_type}:"""
+
+        try:
+            if image_part:
+                contents = [image_part, {"text": text_prompt}]
+            else:
+                contents = text_prompt
+            
+            response = self.model.generate_content(
+                contents,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=1500,
+                    response_mime_type="application/json"
+                )
+            )
+            return self._safe_parse_json(response.text, "semantic_layout")
+        
+        except Exception as e:
+            print(f"   ❌ Semantic layout LLM error: {e}")
+            #return self._fallback_semantic_layout(room_type)
+            return None
+        
+    # ------------------------------
+    # Helpera methods
+    # ------------------------------
+    def _safe_parse_json(self, text:str, label: str) -> Optional[Dict]:
+        """Strip markdown fences and parse JSON safely."""
+        text = text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start != -1 and end > start:
+                try:
+                    return json.loads(text[start:end])
+                except json.JSONDecodeError as e:
+                    print(f"   ❌ JSON parse error in {label}: {e}")
+            return None
+    
+    # can be developerd later for safety reasons
+
+    # def _fallback_semantic_layout(self, room_type: str) -> Dict:
+
+
+# ---------------
+# TEST
+# ---------------
+if __name__ == "__main__":
+    agent = ImageAgent()
+
+    for room in ["office"]:
+        print(f"\n{'='*60}")
+        print(f"TEST: extract_semantic_layout('{room}')")
+        print("="*60)
+        result = agent.extract_semantic_layout(room)
+        print(json.dumps(result, indent=2))
