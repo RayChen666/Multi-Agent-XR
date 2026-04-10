@@ -4,7 +4,7 @@ import google.generativeai as genai
 class LanguageAgent:
     def __init__(self):
         # Configure Gemini API
-        genai.configure(api_key='...')
+        genai.configure(api_key='API_KEY_HERE')
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
     def parse_prompt(self, 

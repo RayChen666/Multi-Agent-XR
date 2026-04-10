@@ -4,6 +4,7 @@ import base64
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from imageAgent import ImageAgent
 
 # ============================================================================
 #   REFERENCE IMAGE LIBRARY
@@ -83,7 +84,7 @@ class Memory:
     """
 
     def __init__(self, assets_base_path: str = None):
-        genai.configure(api_key='...')
+        genai.configure(api_key='API_KEY_HERE')  # Replace with your actual API key
         self.model = genai.GenerativeModel('gemini-2.5-flash')
 
         if assets_base_path is None:

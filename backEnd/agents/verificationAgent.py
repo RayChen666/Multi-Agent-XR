@@ -13,7 +13,7 @@ class VerificationAgent:
     def __init__(self, database):
         # Initialize the database
         self.database = database
-        genai.configure(api_key='...')
+        genai.configure(api_key='API_KEY_HERE')
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
     def get_object_state (self, object_name: str) -> Optional[Dict]:
