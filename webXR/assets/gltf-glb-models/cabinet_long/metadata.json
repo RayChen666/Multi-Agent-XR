@@ -1,0 +1,32 @@
+{
+    "name": "cabinet long",
+    "category": "furniture",
+    "subcategory": "surface",
+    "default_scale": {
+      "x": 0.6,
+      "y": 0.6,
+      "z": 0.6
+    },
+    "properties": {
+      "movable": true,
+      "interactive": true,
+      "canSitOn": false,
+      "weight": "heavy"
+    },
+    "typical_dimensions": {
+      "width": 1.2,
+      "height": 0.75,
+      "depth": 0.6
+    },
+    "default_rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "aliases": [
+      "long cabinet",
+      "tv cabinet",
+      "large cabinet"
+    ],
+    "description": "A long cabinet that can put a television on it, typically placed against a wall"
+}

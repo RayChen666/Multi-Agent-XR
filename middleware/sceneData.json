@@ -43,7 +43,7 @@
         "y": 0.3333333333333333,
         "z": 0.3333333333333333
       },
-      "texture": "assets/textures/wood-floor-texture.png",
+      "texture": "assets/textures/brick-floor.jpg",
       "material": "standard"
     },
     "walls": [
@@ -150,6 +150,37 @@
     ]
   },
   "objects": [
+
+    {
+      "id": "desk_01",
+      "name": "desk",
+      "category": "furniture",
+      "subcategory": "surface",
+      "modelPath": "assets/gltf-glb-models/desk/desk.glb",
+      "position": {
+        "x": 0,
+        "y": -1,
+        "z": -1.5
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.6,
+        "y": 0.6,
+        "z": 0.6
+      },
+
+      "properties": {
+        "movable": true,
+        "interactive": true,
+        "canPlaceOn": true,
+        "weight": "medium"
+      }
+    }
+    
     
     
   ],

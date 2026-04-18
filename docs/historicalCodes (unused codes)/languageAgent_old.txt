@@ -7,7 +7,7 @@ from typing import Dict, Tuple, List
 class LanguageAgent:
     def __init__(self):
         # you can change the API key
-        genai.configure(api_key='AIzaSyCPHwWiX1fwWkn6-ffrFEdQE-qP6KvxE_8')
+        genai.configure(api_key='...')
 
         # you can change the model to test effect and efficiency
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
@@ -464,7 +464,7 @@ print(categorize_prompt("rotate chair 90 degrees"))
 class LanguageAgent:
     def __init__(self):
         # Configure Gemini API
-        genai.configure(api_key='AIzaSyALn9uAxPPta3p1NEGae9FgaMwcMo5mFNw')
+        genai.configure(api_key='...')
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
     def parse_prompt(self, 

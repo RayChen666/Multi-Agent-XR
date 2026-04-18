@@ -1,269 +1,401 @@
 import google.generativeai as genai
 import json
-import base64
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
-from imageAgent import ImageAgent
+from typing import Dict, List, Optional
+
+try:
+    # When imported as part of the package (from orchestrator)
+    from memory.imageAgent import ImageAgent
+except ModuleNotFoundError:
+    # When run directly as a standalone script for testing
+    from imageAgent import ImageAgent
+
 
 # ============================================================================
-#   REFERENCE IMAGE LIBRARY
-#   Maps target room types to canonical reference image paths.
-#   Images live in: webXR/assets/reference_layouts/<room_type>.jpg
+# REFERENCE IMAGE LIBRARY
+# Maps target room types to canonical reference image paths.
+# Images live in: webXR/assets/reference_layouts/<room_type>.jpg
 # ============================================================================
-
 REFERENCE_IMAGE_LIBRARY = {
-    "office":       "reference_layouts/office.jpg",
-    "bedroom":      "reference_layouts/bedroom.jpg",
+    "office":      "reference_layouts/office.jpg",
+    "bedroom":     "reference_layouts/bedroom.jpg",
+    "living room": "reference_layouts/living_room.jpg",
+    "dining room": "reference_layouts/dining_room.jpg",
+    "kitchen":     "reference_layouts/kitchen.jpg",
+    "studio":      "reference_layouts/studio.jpg",
+    "library":     "reference_layouts/library.jpg",
+    "gym":         "reference_layouts/gym.jpg",
 }
 
+# Nodes in the layout_graph that are architectural / structural —
+# never added as furniture assets.
+ARCHITECTURAL_NODES = {
+    "floor", "ceiling", "door", "window",
+    "back_wall", "front_wall", "left_wall", "right_wall",
+    "back_right_corner", "front_left_corner",
+    "back_left_corner", "front_right_corner",
+}
+
+
 class Memory:
-
     """
-        This memory-specific agent is for complex route only
+    Memory Agent — Complex Route only.
 
-        It is triggered when the Language Agent classifies a command as "Vague/Complex", 
-        meaning the user intent requires whole-room reasoning rather than a single object 
-        transformation.
+    Triggered when the Language Agent classifies a command as "Vague/Complex",
+    meaning the user intent requires whole-room reasoning rather than a single
+    object transformation.
 
-        Functionality:
-        1. Detect the TARGET room type from the user's natural-language command.
-        2. Load a REFERENCE IMAGE for that room type (semantic layout grounding).
-        3. Read the CURRENT SCENE JSON (ground-truth object state).
-        4. Run a two-stage LLM reasoning call:
-            Stage A — semantic layout: 
-                extract anchor, zones, cluster relations from the reference image.
-            Stage B — delta planning: 
-                compare current scene against the target layout → decide what to 
-                KEEP / REMOVE / ADD, with quantities and descriptions the Asset 
-                Agent can consume directly.
-        5. Return a unified memory_context dict that the Orchestrator stores in
-        state["memory_context"] before handing off to the Asset Agent and
-        Scene Agent.
-        
-        Output contract (state["memory_context"])
-        ------------------------------------------
-        {
-            "target_room_type": str,
-            "semantic_layout": {
-                "anchor_object":    str,          # e.g. "desk"
-                "anchor_placement": str,          # e.g. "against_longest_wall"
-                "functional_zones": {             # zone_name → description
-                    "primary_work_zone": str,
-                    "storage_zone":      str,
-                    "circulation_space": str
-                },
-                "cluster_relations": [            # relational graph
-                    {
-                        "type":      str,         # e.g. "office_chair"
-                        "relation":  str,         # e.g. "in_front_of"
-                        "reference": str          # e.g. "desk"
-                    }
-                ],
-                "room_function":    str           # e.g. "focused_individual_work"
-            },
-            "delta_plan": {
-                "keep":   [str],                  # object IDs to keep as-is
-                "remove": [str],                  # object IDs to remove
-                "add": [                          # new objects for Asset Agent
-                    {
-                        "object":      str,       # canonical object type name
-                        "quantity":    int,
-                        "description": str        # rich description for asset matching
-                    }
-                ]
-            },
-            "spatial_constraints_from_current_scene": {
-                "room_dimensions":   dict,        # {x, y, z} from scene_state
-                "occupied_zones":    list,        # rough zone labels still occupied
-                "freed_zones":       list         # zones freed after removals
-            },
-            "layout_rationale": str               # for Verification Agent
-        }
+    Responsibilities
+    ----------------
+    1.  Detect the TARGET room type from the user's natural-language command.
+    2.  Delegate to ImageAgent → get semantic layout graph (nodes + edges).
+    3.  Derive population plan via PURE DATA TRANSFORMATION of the layout graph
+        — no second LLM call needed.
+    4.  Return a unified memory_context dict for the Orchestrator to store in
+        state["memory_context"], and patch parsed_command for the Asset Agent.
 
+    CURRENT SCOPE: Create-from-scratch only.
+    # TODO: conversion route — add KEEP/REMOVE delta reasoning against existing
+    #        scene objects once the population baseline is stable.
+
+    Output contract (state["memory_context"])
+    ------------------------------------------
+    {
+        "target_room_type": str,
+        "semantic_layout":  { ... },         # graph from ImageAgent
+        "population_plan": {
+            "keep":   [],                    # always empty for now
+            "remove": [],                    # always empty for now
+            "add": [
+                {
+                    "object":      str,      # canonical object type name
+                    "quantity":    int,
+                    "description": str
+                }
+            ],
+            "population_rationale": str
+        },
+        "room_dimensions":  dict,            # derived from scene_state metadata
+        "layout_rationale": str              # forwarded to Verification Agent
+    }
     """
 
     def __init__(self, assets_base_path: str = None):
-        genai.configure(api_key='API_KEY_HERE')  # Replace with your actual API key
+        genai.configure(api_key='API')
         self.model = genai.GenerativeModel('gemini-2.5-flash')
 
-        if assets_base_path is None:
-            repo_root = Path(__file__).resolve().parents[2]
-            self.assets_base = repo_root / "webXR" / "assets"
-        else:
-            self.assets_base = Path(assets_base_path)
-        
+        # ImageAgent handles reference image loading + semantic layout extraction
+        self.image_agent = ImageAgent(assets_base_path)
+
         print("🧠 Memory module initialized")
-        print(f"   Assets base: {self.assets_base}")
+
 
     # =========================================================================
-    # Public API  —  these methods are called by Orchestrator
+    # PUBLIC API — called by Orchestrator._memory_node()
     # =========================================================================
 
     def process(self,
                 parsed_command: Dict,
                 scene_state: Dict) -> Optional[Dict]:
         """
-        Main entry point.  Called from the Orchestrator memory node.
+        Main entry point. Called from the Orchestrator memory node.
 
         Args:
             parsed_command : enriched output from LanguageAgent.parse_prompt()
-            scene_state    : current scene state from database
-                             database.scene_data  (ground-truth JSON)
-        Returns:
-            memory_context dict (for both asset and scene agents) or None on failure.
-        """
+            scene_state    : database.scene_data (ground-truth JSON)
 
+        Returns:
+            memory_context dict or None on failure.
+        """
         print("\n🧠 MemoryAgent: starting complex-route reasoning...")
+
         original_prompt = parsed_command.get("original_prompt", "")
         intent_summary  = parsed_command.get("intent_summary", original_prompt)
 
-        # Stage 1: Extract target room type from intent summary
+        # ── Step 1: detect target room type ──────────────────────────────────
         target_room_type = self._detect_target_room_type(
             original_prompt, intent_summary
         )
         print(f"   Target room type detected: '{target_room_type}'")
 
-        # Stage 2: Load reference image for that room type
-        image_part = self._load_reference_image(target_room_type)
-        if image_part:
-            print(f"   ✅  Reference image loaded for room type '{target_room_type}'")
-
-        else:
-            print(f"   ⚠️  No reference image found — using parametric LLM knowledge only")
-
-        # Stage 3: semantic layout from image + room type
-        semantic_layout = self._reason_semantic_layout(
-            target_room_type, image_part, original_prompt
-        )
+        # ── Step 2: ImageAgent → semantic layout graph ────────────────────────
+        semantic_layout = self.image_agent.extract_semantic_layout(target_room_type)
         if not semantic_layout:
-            print(f"   ❌  Semantic layout reasoning failed")
+            print("   ❌ ImageAgent returned no semantic layout — aborting")
             return None
-        
-        print(f"   ✅ Semantic layout: anchor='{semantic_layout.get('anchor_object')}'")
 
+        # ── Step 3: derive room dimensions from scene metadata ────────────────
+        room_dims = self._get_room_dimensions(scene_state)
+        print(f"   Room dimensions: {room_dims}")
 
-        # Stage 4: delta plan from comparing current scene to target layout
-        delta_plan, spatial_constraints = self._reason_delta_plan(
+        # ── Step 4: population plan via data transformation (no LLM) ─────────
+        population_plan = self._reason_population_plan(
             target_room_type,
             semantic_layout,
-            scene_state,
-            original_prompt
+            room_dims
         )
-        if not delta_plan:
-            print("   ❌ Delta plan reasoning failed")
+        if not population_plan:
+            print("   ❌ Population planning failed — aborting")
             return None
-        print(f"   ✅ Delta plan: keep={len(delta_plan.get('keep', []))}, "
-              f"remove={len(delta_plan.get('remove', []))}, "
-              f"add={len(delta_plan.get('add', []))}")
-        
-        # Stage 5: unify memory context for asset and scene agents
+
+        print(f"   ✅ Population plan: "
+              f"add={len(population_plan.get('add', []))} object type(s)")
+
+        # ── Step 5: assemble memory_context ──────────────────────────────────
         memory_context = {
-            "target_room_type":   target_room_type,
+            "target_room_type":  target_room_type,
             "semantic_layout":   semantic_layout,
-            "delta_plan":        delta_plan,
-            "spatial_constraints_from_current_scene": spatial_constraints,
-            "layout_rationale":   semantic_layout.get("layout_rationale", ""),
+            "population_plan":   population_plan,
+            "room_dimensions":   room_dims,
+            "layout_rationale":  semantic_layout.get("layout_rationale", ""),
         }
 
-
-
-        # Rewrite parsed_command so the downstream Asset Agent sees the right
-        # objects and quantities (instead of the original vague command).
-
-        self._patch_parsed_command_for_asset_agent(parsed_command, delta_plan)
+        # Patch parsed_command so Asset Agent consumes the ADD list
+        self._patch_parsed_command_for_asset_agent(parsed_command, population_plan)
 
         print("   ✅ MemoryAgent complete — memory_context ready\n")
-
-
         return memory_context
-    
 
 
+    # =========================================================================
+    # STEP 1 — detect target room type
+    # =========================================================================
 
-    # Stage 1: Detect target room type
     def _detect_target_room_type(self,
                                   original_prompt: str,
                                   intent_summary: str) -> str:
         """
-        Extract the target room type from the user's command using the LLM.
+        Use LLM to extract target room type from user command.
         Falls back to keyword matching if the LLM call fails.
         """
+        known_list = ", ".join(REFERENCE_IMAGE_LIBRARY.keys())
+
         prompt = f"""You are a room-type classifier.
- 
-        Given the user command below, identify the TARGET room type the user wants to
-        convert or create. Reply with ONLY the room type as a lowercase string from
-        this list:
-        office, bedroom, living room, dining room, kitchen, studio, library, gym
-        
-        If none match, reply: unknown
-        
-        User command: "{original_prompt}"
-        Intent: "{intent_summary}"
-        
-        Reply with exactly one room type string, nothing else."""
+
+Given the user command below, identify the TARGET room type the user wants to
+convert or create. Reply with ONLY the room type as a lowercase string from
+this list:
+  {known_list}
+
+If none match, reply: unknown
+
+User command : "{original_prompt}"
+Intent       : "{intent_summary}"
+
+Reply with exactly one room type string — nothing else."""
 
         try:
-            response = self.model.generate_content (
+            response = self.model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.0,
                     max_output_tokens=20,
-                    )
                 )
+            )
             room_type = response.text.strip().lower()
             if room_type in REFERENCE_IMAGE_LIBRARY:
                 return room_type
-        
-        # failure report
         except Exception as e:
             print(f"   ⚠️  Room-type LLM call failed: {e}")
 
-        # Fallback reasoning (case without LLM involvement)
+        # Keyword fallback
         text = (original_prompt + " " + intent_summary).lower()
         for room_type in REFERENCE_IMAGE_LIBRARY:
             if room_type in text:
                 return room_type
+
         return "unknown"
-    
 
 
+    # =========================================================================
+    # STEP 4 — population plan via pure data transformation
+    # =========================================================================
 
-    # Stage 2: load reference image
-    def _load_reference_image(self, room_type: str) -> Optional[Dict]:
+    def _reason_population_plan(self,
+                                 target_room_type: str,
+                                 semantic_layout: Dict,
+                                 room_dims: Dict) -> Optional[Dict]:
         """
-        Load the reference image for the target room type.
-        Returns a Gemini-compatible inline_data part, or None if not found.
+        Derives the population plan directly from the layout_graph
+        produced by ImageAgent — NO additional LLM call.
+
+        Logic:
+          1. Read layout_graph.nodes from semantic_layout
+          2. Filter out architectural / boundary nodes
+          3. Build the ADD list — 1 of each furniture node
+          4. Return population_plan dict
+
+        This replaces the previous LLM-based approach which caused
+        JSON parse errors and added unnecessary latency + token cost.
+        The ImageAgent already did the hard reasoning; we just read its output.
         """
+        layout_graph = semantic_layout.get("layout_graph", {})
+        nodes        = layout_graph.get("nodes", [])
 
+        if not nodes:
+            print("   ⚠️  No nodes in layout_graph — using fallback")
+            return self._fallback_population_plan()
 
-        relative_path = REFERENCE_IMAGE_LIBRARY.get(room_type)
-        if not relative_path:
-            return None
-        
-        image_path = self.assets_base / relative_path
-        if not image_path.exists():
-            print(f"   ⚠️  Reference image not found at: {image_path}")
-            return None
-        
-        try:
-            with open(image_path, "rb") as f:
-                image_bytes = f.read()
-            
-            ext = image_path.suffix.lower()
-            mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                        ".png": "image/png",  ".webp": "image/webp"}
-            mime_type = mime_map.get(ext, "image/jpeg")
+        # Filter to furniture nodes only — exclude architectural + boundary nodes
+        furniture_nodes = [
+            node for node in nodes
+            if node.lower() not in ARCHITECTURAL_NODES
+            and "wall"   not in node.lower()
+            and "window" not in node.lower()
+            and "corner" not in node.lower()
+            and "door"   not in node.lower()
+            and "floor"  not in node.lower()
+            and "ceil"   not in node.lower()
+        ]
 
-            return {
-                "inline_data": {
-                    "mime_type": mime_type,
-                    "data": base64.b64encode(image_bytes).decode("utf-8")
-                }
+        if not furniture_nodes:
+            print("   ⚠️  No furniture nodes found in layout_graph — using fallback")
+            return self._fallback_population_plan()
+
+        print(f"   📋 Furniture nodes extracted: {furniture_nodes}")
+
+        # Build ADD list — quantity 1 per furniture type
+        add_list = [
+            {
+                "object":      node,
+                "quantity":    1,
+                "description": f"{node} suitable for a {target_room_type}"
             }
-        except Exception as e:
-            print(f"   ⚠️  Failed to load reference image: {e}")
-            return None
-        
+            for node in furniture_nodes
+        ]
 
-        # Stage 3: Part A: semantic layout reasoning
+        return {
+            "keep":   [],
+            "remove": [],
+            "add":    add_list,
+            "population_rationale": (
+                f"Furniture nodes extracted directly from ImageAgent layout_graph "
+                f"for a {target_room_type} — no additional LLM call required."
+            )
+        }
+
+
+    # =========================================================================
+    # STEP 5 — patch parsed_command for Asset Agent
+    # =========================================================================
+
+    def _patch_parsed_command_for_asset_agent(self,
+                                               parsed_command: Dict,
+                                               population_plan: Dict) -> None:
+        """
+        Rewrite parsed_command in place so the Asset Agent receives
+        a well-formed ADD command derived from the population plan.
+
+        The Asset Agent reads:
+          - parsed_command["involved_objects"]
+          - parsed_command["action_hints"]["primary_action"]
+
+        We also inject:
+          - parsed_command["objects_to_remove"]  → for Execution Agent
+          - parsed_command["objects_to_keep"]    → for Scene Agent context
+
+        Mutates in place — the Orchestrator passes the same dict reference
+        through the graph, so all downstream agents see the update.
+        """
+        add_items = population_plan.get("add", [])
+
+        if not add_items:
+            parsed_command["involved_objects"] = []
+            parsed_command["action_hints"]["primary_action"] = "arrange"
+        else:
+            # Expand quantities into flat list
+            # e.g. [{"object": "desk", "quantity": 1}, {"object": "chair", "quantity": 2}]
+            # →    ["desk", "chair", "chair"]
+            involved = []
+            for item in add_items:
+                obj_name = item.get("object", "")
+                qty      = max(1, int(item.get("quantity", 1)))
+                involved.extend([obj_name] * qty)
+
+            parsed_command["involved_objects"]                         = involved
+            parsed_command["action_hints"]["primary_action"]           = "add"
+            parsed_command["action_hints"]["requires_asset_selection"] = True
+
+        # Always inject remove/keep for downstream agents
+        parsed_command["objects_to_remove"] = population_plan.get("remove", [])
+        parsed_command["objects_to_keep"]   = population_plan.get("keep",   [])
+
+        print(f"   🔧 parsed_command patched:")
+        print(f"      add    → {parsed_command.get('involved_objects', [])}")
+        print(f"      remove → {parsed_command.get('objects_to_remove', [])}")
+        print(f"      keep   → {parsed_command.get('objects_to_keep', [])}")
+
+
+    # =========================================================================
+    # HELPERS
+    # =========================================================================
+
+    def _get_room_dimensions(self, scene_state: Dict) -> Dict:
+        """
+        Derive room dimensions from scene_state metadata bounds.
+        Falls back to conservative defaults if metadata is absent.
+        """
+        metadata = scene_state.get("metadata", {})
+        bounds   = metadata.get("bounds", {})
+        min_b    = bounds.get("min", {"x": -1,  "y": -1,  "z": -2.5})
+        max_b    = bounds.get("max", {"x":  1,  "y":  0.5,"z": -0.5})
+        return {
+            "x": round(max_b["x"] - min_b["x"], 3),
+            "y": round(max_b["y"] - min_b["y"], 3),
+            "z": round(max_b["z"] - min_b["z"], 3),
+        }
+
+    def _fallback_population_plan(self) -> Dict:
+        """
+        Minimal safe fallback: empty add list.
+        Prevents pipeline crash when layout_graph is missing or empty.
+        """
+        return {"keep": [], "remove": [], "add": [],
+                "population_rationale": "Fallback — no furniture nodes found."}
+
+
+# =============================================================================
+# STANDALONE TEST
+# =============================================================================
+if __name__ == "__main__":
+
+    agent = Memory()
+
+    mock_parsed_command = {
+        "original_prompt": "make this plain space into an office",
+        "command_type":    "Vague/Complex",
+        "involved_objects": [],
+        "spatial_concepts": ["room creation from scratch", "office setup"],
+        "intent_summary":  "Furnish an empty space as a functional office",
+        "action_hints": {
+            "primary_action":             "arrange",
+            "requires_asset_selection":   True,
+            "requires_spatial_reasoning": True
+        }
+    }
+
+    # Empty scene — structure matches real sceneData.json
+    mock_scene_state = {
+        "metadata": {
+            "sceneName": "empty_room",
+            "bounds": {
+                "min": {"x": -1, "y": -1,   "z": -2.5},
+                "max": {"x":  1, "y":  0.5, "z": -0.5}
+            }
+        },
+        "objects": []
+    }
+
+    result = agent.process(mock_parsed_command, mock_scene_state)
+
+    print("\n" + "="*60)
+    print("📦 MEMORY AGENT OUTPUT (memory_context):")
+    print("="*60)
+    print(json.dumps(result, indent=2))
+
+    print("\n" + "="*60)
+    print("📦 PATCHED parsed_command (seen by Asset Agent):")
+    print("="*60)
+    print(json.dumps(mock_parsed_command, indent=2))
+
