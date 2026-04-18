@@ -60,7 +60,7 @@ class Database:
                 # Keep track of highest number for each base name
                 self.id_counters[base_name] = max(self.id_counters.get(base_name, 0), num)
         
-        print(f"🔢 ID Counters initialized: {self.id_counters}")
+        print(f"ID Counters initialized: {self.id_counters}")
 
     """ _____________________________________________________________
         Basic functions: Load & Save
@@ -98,10 +98,10 @@ class Database:
                 self.objects.append(floor)
         
         except FileNotFoundError:
-            print(f"❌ Scene file not found: {self.json_path}")
+            print(f"Scene file not found: {self.json_path}")
             raise
         except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON in scene file: {e}")
+            print(f"Invalid JSON in scene file: {e}")
             raise
     
     '''
@@ -117,9 +117,9 @@ class Database:
         try:
             with open(save_path, 'w') as f:
                 json.dump(self.scene_data, f, indent=2)
-            print(f"✅ Scene saved to {save_path}")
+            print(f"Scene saved to {save_path}")
         except Exception as e:
-            print(f"❌ Failed to save scene: {e}")
+            print(f"Failed to save scene: {e}")
             raise
     '''
     

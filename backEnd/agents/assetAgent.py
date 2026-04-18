@@ -7,6 +7,10 @@ from typing import Dict, Optional, List
 import uuid
 import re
 
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("API_KEY")
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database import Database
@@ -39,7 +43,7 @@ class AssetAgent:
         else:
             self.assets_path = Path(assets_path)
 
-        genai.configure(api_key='API key')
+        genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
         self.database = database
@@ -49,7 +53,7 @@ class AssetAgent:
         self.known_assets = self._load_known_assets()
         self.all_assets = self._scan_all_assets()
 
-        print(f"📦 AssetAgent initialized")
+        print(f"AssetAgent initialized")
         print(f"   Known assets (with metadata): {len(self.known_assets)}")
         print(f"   Total assets discovered: {len(self.all_assets)}")
 
@@ -68,7 +72,7 @@ class AssetAgent:
         library = {}
 
         if not self.assets_path.exists():
-            print(f"⚠️  Assets path not found: {self.assets_path}")
+            print(f"Assets path not found: {self.assets_path}")
             return library
         
         # Scan all subdirectories
@@ -89,11 +93,13 @@ class AssetAgent:
                 # Find the model file (.gltf or .glb)
                 model_files = list(asset_dir.glob("*.gltf")) + list(asset_dir.glob("*.glb"))
                 if not model_files:
-                    print(f"⚠️  Skipping {asset_dir.name} - no model file found")
+                    print(f"Skipping {asset_dir.name} - no model file found")
                     continue
                 
                 model_file = model_files[0]
-                relative_path = str(model_file).split('webXR/')[-1]
+                # Convert any Windows backslashes to forward slashes before splitting
+                normalized_path = str(model_file).replace('\\', '/')
+                relative_path = normalized_path.split('webXR/')[-1]
                 
                 # Store asset with full metadata
                 asset_name = metadata["name"]
@@ -113,10 +119,10 @@ class AssetAgent:
                 for alias in metadata.get("aliases", []):
                     library[alias] = library[asset_name]
                 
-                print(f"   ✅ Loaded: {asset_name} ({metadata['category']}/{metadata['subcategory']})")
+                print(f"Loaded: {asset_name} ({metadata['category']}/{metadata['subcategory']})")
                 
             except Exception as e:
-                print(f"⚠️  Error loading metadata for {asset_dir.name}: {e}")
+                print(f"Error loading metadata for {asset_dir.name}: {e}")
                 continue
         
         return library
@@ -175,7 +181,7 @@ class AssetAgent:
         
         word_to_num = {
             'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
-            'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+            'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 
             'a': 1, 'an': 1
         }
         quantities = []
@@ -263,14 +269,14 @@ class AssetAgent:
             matched_name = response.text.strip()
             
             if matched_name == "NONE" or matched_name not in available_names:
-                print(f"   ❌ LLM found no good match for '{object_name}'")
+                print(f"LLM found no good match for '{object_name}'")
                 return None
             
             print(f"   ✅ LLM matched '{object_name}' → '{matched_name}'")
             return matched_name
             
         except Exception as e:
-            print(f"   ⚠️  LLM matching error: {e}")
+            print(f"LLM matching error: {e}")
             return None
     
     # ID generation
@@ -330,7 +336,7 @@ class AssetAgent:
         Returns:
             Complete object structure (except position/rotation)
         """
-        print(f"\n🎨 AssetAgent creating object: '{object_name}'")
+        print(f"\nAssetAgent creating object: '{object_name}'")
         
         matched_name = self._find_best_match(object_name)
         
@@ -361,7 +367,7 @@ class AssetAgent:
         canonical_name = template["name"]
         new_id = self._generate_unique_id(canonical_name)
         
-        print(f"   ✅ Using known asset: {canonical_name}")
+        print(f"Using known asset: {canonical_name}")
         if asset_name != canonical_name:
             print(f"      (matched via alias: '{asset_name}')")
         print(f"   Generated ID: {new_id}")
@@ -388,7 +394,7 @@ class AssetAgent:
     def process_command(self, parsed_command: Dict) -> Dict:
         """
         Main entry point from orchestrator.
-        Handles both ADD command.
+        Handles both ADD and REMOVE commands.
         
         Args:
             parsed_command: Parsed command from Language Agent containing:
@@ -397,7 +403,9 @@ class AssetAgent:
                 
         Returns:
             Dict with action results:
-            - For ADD: {"action": "add", "new_object": {...}, "needs_positioning": True}
+            - For ADD: {"action": "add", "new_objects": [...], "needs_positioning": True}
+            - For REMOVE: {"action": "remove", "remove_intent": {...}, "needs_positioning": False}
+              (SceneAgent selects final ids; AssetAgent does not resolve target_object_ids.)
         """
         action = parsed_command.get("action_hints", {}).get("primary_action", "").lower()
         involved_objects = parsed_command.get("involved_objects", [])
@@ -414,7 +422,7 @@ class AssetAgent:
                 self.pending_objects = []
                 original_prompt = parsed_command.get("original_prompt", "")
                 object_quantities = self._extract_object_quantities(original_prompt, involved_objects)
-                print(f"   📋 Parsed quantities: {object_quantities}")
+                print(f"Parsed quantities: {object_quantities}")
                 new_objects = []
 
                 for pair in object_quantities:
@@ -426,7 +434,7 @@ class AssetAgent:
                     for i in range(quantity):
                         new_object = self.create_object(object_name)
                         new_objects.append(new_object)
-                        print(f"      ✅ Created: {new_object['id']}")
+                        print(f"Created: {new_object['id']}")
                     
                 self.pending_objects = []
                     
@@ -446,13 +454,60 @@ class AssetAgent:
                     "success": False,
                     "message": str(e)
                 }
-        
-        else:
-            return {
-                "action": "unknown",
-                "success": False,
-                "message": f"Unknown action: {action}"
+
+        if action in {"remove", "delete"}:
+            # Intent only: SceneAgent (LLM + scene) is the final selector of object ids.
+            requested = [str(x).strip() for x in involved_objects if str(x).strip()]
+            if not requested:
+                return {
+                    "action": "remove",
+                    "success": False,
+                    "needs_positioning": False,
+                    "message": "No objects specified",
+                }
+
+            original_prompt = (parsed_command.get("original_prompt") or "").strip()
+            prompt_lower = original_prompt.lower()
+            requested_lower = [x.lower() for x in requested]
+
+            scope_hint = "contextual"
+            wipe_phrases = (
+                "all objects",
+                "everything",
+                "clear the scene",
+                "clear everything",
+                "remove everything",
+                "delete everything",
+            )
+            generic_token = any(
+                x in {"all", "all objects"} or "all objects" in x for x in requested_lower
+            )
+            if any(p in prompt_lower for p in wipe_phrases) or generic_token:
+                scope_hint = "all_movable"
+            elif re.search(r"\ball\b", prompt_lower) and requested:
+                scope_hint = "all_matching_type"
+
+            remove_intent = {
+                "involved_objects": requested,
+                "original_prompt": original_prompt,
+                "spatial_concepts": parsed_command.get("spatial_concepts") or [],
+                "intent_summary": parsed_command.get("intent_summary"),
+                "scope_hint": scope_hint,
             }
+
+            return {
+                "action": "remove",
+                "remove_intent": remove_intent,
+                "needs_positioning": False,
+                "success": True,
+                "message": "Remove intent recorded; Scene Agent will select targets",
+            }
+
+        return {
+            "action": "unknown",
+            "success": False,
+            "message": f"Unknown action: {action}"
+        }
 
 
 

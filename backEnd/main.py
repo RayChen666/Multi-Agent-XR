@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, Set
 from orchestrator import Orchestrator
 from __init__ import LanguageAgent, SceneAgent, AssetAgent, CodeAgent, VerificationAgent
 from database import Database
+from stt.routes import router as stt_router
 import uvicorn
 import json
 import ssl
@@ -24,6 +25,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(stt_router)
 
 
 
@@ -53,11 +56,11 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self. active_connections.add(websocket)
-        print(f"✅ Client connected. Total: {len(self.active_connections)}")
+        print(f"Client connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
-        print(f"❌ Client disconnected. Total: {len(self.active_connections)}")
+        print(f"Client disconnected. Total: {len(self.active_connections)}")
     
     async def broadcast(self, message: Dict):
         """Broadcast message to all connected clients"""
@@ -73,7 +76,7 @@ class ConnectionManager:
             self.active_connections.discard(conn)
         
         if self.active_connections:
-            print(f"📡 Broadcast to {len(self.active_connections)} clients")
+            print(f"Broadcast to {len(self.active_connections)} clients")
 
 # Global connection manager
 manager = ConnectionManager()
@@ -82,7 +85,7 @@ manager = ConnectionManager()
 @app.websocket("/ws/scene")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    print("🔄 New client connected - clearing added objects")
+    print("New client connected - clearing added objects")
     removed = scene_database.clear_added_objects()
 
     if removed > 0:
@@ -209,8 +212,10 @@ async def process_natural_language_command(request: CommandRequest):
                 detail="Failed to execute command"
             )
     
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"❌ Error in /scene/command: {e}")
+        print(f"Error in /scene/command: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error processing command: {str(e)}"

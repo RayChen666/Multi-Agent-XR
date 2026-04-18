@@ -8,7 +8,7 @@ const gltfLoader = new GLTFLoader();
  * Add new object to scene from WebSocket message
  */
 export function addObjectToScene(data, loadedObjects, scene) {
-  console.log('🎨 Adding new object to scene:', data);
+  console.log('Adding new object to scene:', data);
   
   const { objectId, objectData } = data;
   
@@ -52,7 +52,7 @@ export function addObjectToScene(data, loadedObjects, scene) {
       scene.add(gltf.scene);
       loadedObjects.set(objectId, gltf.scene);
       
-      console.log(`✅ Added ${objectData.name} (${objectId}) to scene`);
+      console.log(`Added ${objectData.name} (${objectId}) to scene`);
       
       // Optional: Spawn animation
       gltf.scene.scale.set(0, 0, 0);
@@ -66,7 +66,7 @@ export function addObjectToScene(data, loadedObjects, scene) {
     },
     undefined,
     (error) => {
-      console.error(`❌ Failed to load ${objectId}:`, error);
+      console.error(`Failed to load ${objectId}:`, error);
     }
   );
 }
@@ -84,7 +84,7 @@ export function updateObjectPosition(data, loadedObjects) {
       duration: 0.5,
       ease: "power2.inOut"
     });
-    console.log(`✨ Updated ${data.name} position from backend`);
+    console.log(`Updated ${data.name} position from backend`);
   } else {
     console.warn(`Object ${data.objectId} not found in scene`);
   }
@@ -103,10 +103,60 @@ export function updateObjectRotation(data, loadedObjects) {
       duration: 0.5,
       ease: "power2.inOut"
     });
-    console.log(`✨ Updated ${data.name} rotation from backend`);
+    console.log(`Updated ${data.name} rotation from backend`);
   } else {
     console.warn(`Object ${data.objectId} not found in scene`);
   }
+}
+
+/**
+ * Dispose geometry/material resources before removing object to prevent memory leaks
+ */
+function disposeThreeObject(root) {
+  root.traverse((child) => {
+    if (child.geometry && typeof child.geometry.dispose === 'function') {
+      child.geometry.dispose();
+    }
+
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach((mat) => {
+          if (mat && typeof mat.dispose === 'function') {
+            mat.dispose();
+          }
+        });
+      } else if (typeof child.material.dispose === 'function') {
+        child.material.dispose();
+      }
+    }
+  });
+}
+
+/**
+ * Remove object from scene from WebSocket message
+ */
+export function removeObjectFromScene(data, loadedObjects, scene) {
+  const { objectId, name } = data || {};
+
+  if (!objectId) {
+    console.warn('removeObjectFromScene called without objectId');
+    return false;
+  }
+
+  const threeObject = loadedObjects.get(objectId);
+  if (!threeObject) {
+    console.warn(`Object ${objectId} not found in scene`);
+    return false;
+  }
+
+  // Remove from scene graph first, then dispose resources.
+  scene.remove(threeObject);
+  disposeThreeObject(threeObject);
+  loadedObjects.delete(objectId);
+
+  const label = name ? `${name} (${objectId})` : objectId;
+  console.log(`Removed ${label} from scene`);
+  return true;
 }
 
 
@@ -118,18 +168,18 @@ let isTracking = false;
 
 export function initHeadTracking(websocket){
   ws = websocket;
-  console.log('✅ Head tracking initialized');
+  console.log('Head tracking initialized');
 
 }
 
 export function startHeadTracking(){
   isTracking = true;
-  console.log('👤 Head tracking started');
+  console.log(' Head tracking started');
 }
 
 export function stopHeadTracking(){
   isTracking = false;
-  console.log('👤 Head tracking stopped');
+  console.log('Head tracking stopped');
 }
 
 // Convert quaternion to Euler angles

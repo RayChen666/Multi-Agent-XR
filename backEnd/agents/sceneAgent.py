@@ -5,6 +5,11 @@ import math
 import re
 from typing import Dict, List, Optional, Tuple
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("API_KEY")
+
 
 class SceneAgent:
     """
@@ -17,7 +22,7 @@ class SceneAgent:
     """
     def __init__(self, use_llm_reasoning=True):
         # Google Gemini Studio initialize
-        genai.configure(api_key='API key')
+        genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
         self.use_llm_reasoning = use_llm_reasoning
 
@@ -97,7 +102,209 @@ class SceneAgent:
             feedback,
             new_objects_to_position
         )
-    
+
+    def resolve_removal_targets(
+        self,
+        parsed_command: Dict,
+        scene_state: Dict,
+        user_position: Dict = None,
+        feedback: Optional[Dict] = None,
+    ) -> Optional[Dict]:
+        """
+        LLM-driven selection of which scene object id(s) to remove.
+
+        Parallel to calculate_spatial_transformation, but output is ids only
+        (no position/rotation), so delete stays spatial-reasoning-first without
+        forcing the placement JSON schema.
+
+        Args:
+            parsed_command: LanguageAgent output (original_prompt, involved_objects,
+                spatial_concepts, action_hints, etc.)
+            scene_state: Current scene (objects list, etc.)
+            user_position: Viewer pose {x,y,z, rotation:{x,y,z}}
+            feedback: Optional retry hint from verification (same shape as spatial path)
+
+        Returns:
+            {
+                "action": "remove",
+                "target_object_ids": [str, ...],
+                "reasoning": str
+            }
+            or None if resolution fails completely.
+        """
+        if user_position is None:
+            user_position = {
+                "x": 0,
+                "y": 0,
+                "z": 0,
+                "rotation": {"x": 0, "y": 0, "z": 0},
+            }
+
+        print(f"\nScene Agent (remove) resolving targets:")
+        print(f"   Original Prompt: '{parsed_command.get('original_prompt', 'N/A')}'")
+        print(f"   Objects: {parsed_command.get('involved_objects', [])}")
+        print(f"   Spatial Concepts: {parsed_command.get('spatial_concepts', [])}")
+        if parsed_command.get("remove_intent"):
+            print(f"   Remove intent (hints): {parsed_command.get('remove_intent')}")
+        if feedback:
+            print(f"Feedback: {feedback.get('suggestion', 'N/A')}")
+
+        if not self.use_llm_reasoning:
+            return self._fallback_removal_calculation(parsed_command, scene_state)
+
+        return self._llm_removal_reasoning(
+            parsed_command, scene_state, user_position, feedback
+        )
+
+    def _llm_removal_reasoning(
+        self,
+        parsed_command: Dict,
+        scene_state: Dict,
+        user_position: Dict,
+        feedback: Optional[Dict] = None,
+    ) -> Optional[Dict]:
+        scene_objects = [
+            {
+                "id": obj["id"],
+                "name": obj["name"],
+                "position": obj["position"],
+                "rotation": obj["rotation"],
+                "category": obj.get("category", "unknown"),
+                "movable": obj.get("properties", {}).get("movable", False),
+            }
+            for obj in scene_state.get("objects", [])
+        ]
+
+        original_prompt = parsed_command.get("original_prompt", "")
+        involved = parsed_command.get("involved_objects", [])
+        spatial_concepts = parsed_command.get("spatial_concepts", [])
+        intent_summary = parsed_command.get("intent_summary", original_prompt)
+        action_hints = parsed_command.get("action_hints", {})
+        remove_intent = parsed_command.get("remove_intent") or {}
+        remove_intent_json = json.dumps(remove_intent, indent=2) if remove_intent else "{}"
+
+        feedback_context = ""
+        if feedback:
+            feedback_context = f"""
+            FEEDBACK FROM PREVIOUS ATTEMPT:
+            {json.dumps(feedback, indent=2)}
+            Adjust your selection accordingly.
+            """
+
+        prompt = f"""You are an expert spatial reasoning AI for a 3D virtual environment.
+        Your task is to decide WHICH existing object(s) the user wants REMOVED (not moved).
+
+        USER REQUEST (verbatim):
+        "{original_prompt}"
+
+        PARSED CONTEXT:
+        - Intent summary: {intent_summary}
+        - Involved object names (hints): {involved}
+        - Spatial concepts: {spatial_concepts}
+        - Primary action hint: {action_hints.get('primary_action', 'remove')}
+        - Asset remove_intent (non-authoritative hints; you still output final ids from the scene list):
+        {remove_intent_json}
+        Use scope_hint when ambiguous: "all_movable" → all movable objects; "all_matching_type" → all
+        scene objects matching the involved type/name; "contextual" → use singular/plural and spatial phrasing in the user text.
+
+        USER POSITION & FACING (Y rotation in radians):
+        Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
+        Facing (Y): {user_position.get('rotation', dict()).get('y', 0):.2f}
+
+        SCENE OBJECTS (use EXACT "id" strings from this list only):
+        {json.dumps(scene_objects, indent=2)}
+
+        RULES:
+        1. Output ONLY JSON, no markdown or extra text.
+        2. "target_object_ids" must be a list of ids copied exactly from the scene list.
+        3. Prefer objects with movable=true; do not remove structural/floor/wall unless the user clearly demands it.
+        4. CRITICAL — Singular / ambiguous phrasing ("the chair", "Remove the Chair", "that lamp", "delete chair")
+        when several instances match: return EXACTLY ONE id. Prefer: (a) any spatial cue in the text;
+        else (b) the movable instance CLOSEST to the user's position (see coordinates above).
+        NEVER expand ambiguous singular into "remove every matching object".
+        5. "all chairs" / explicit plural / "both" / counts → all matching that type/name in the scene.
+        6. "all objects" / "everything" → all movable objects only.
+        7. Use spatial language (left/right of table, near window, etc.) with the coordinate system:
+        - X: left (-) to right (+)
+        - Y: down (-) to up (+), floor often near y=-1
+        - Z: forward (-) to backward (+); user often faces -Z
+        8. "left/right/forward" are relative to the USER's facing direction unless tied to another object.
+        {feedback_context}
+
+        OUTPUT JSON SHAPE (exact shape required):
+        {{
+        "action": "remove",
+        "target_object_ids": ["id_1", "id_2"],
+        "reasoning": "short explanation"
+        }}
+        """
+
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2,
+                    max_output_tokens=1024,
+                    response_mime_type="application/json",
+                ),
+            )
+            result = json.loads(response.text)
+            if not self._validate_removal_response(result, scene_state):
+                print("⚠️ LLM removal output validation failed, using fallback")
+                return self._fallback_removal_calculation(parsed_command, scene_state)
+
+            print(f"   Removal resolution: {len(result.get('target_object_ids', []))} id(s)")
+            if result.get("reasoning"):
+                print(f"Removal Reasoning: {result['reasoning']}")
+            return result
+        except json.JSONDecodeError as e:
+            print(f"LLM removal JSON error: {e}")
+            return self._fallback_removal_calculation(parsed_command, scene_state)
+        except Exception as e:
+            print(f"LLM removal error: {e}")
+            return self._fallback_removal_calculation(parsed_command, scene_state)
+
+    def _validate_removal_response(self, result: Dict, scene_state: Dict) -> bool:
+        if not result or result.get("action") != "remove":
+            return False
+        
+        ids = result.get("target_object_ids")
+
+        if not isinstance(ids, list):
+            return False
+        
+        valid_ids = {obj["id"] for obj in scene_state.get("objects", [])}
+        for oid in ids:
+            if not isinstance(oid, str) or oid not in valid_ids:
+                return False
+        return True
+
+    def _fallback_removal_calculation(
+        self, parsed_command: Dict, scene_state: Dict
+    ) -> Optional[Dict]:
+        """Name-based fallback: first substring name match per involved token (weak)."""
+        involved = parsed_command.get("involved_objects", [])
+        if not involved:
+            return None
+        matched: List[str] = []
+        seen = set()
+        for name_hint in involved:
+            hint = str(name_hint).lower()
+            for obj in scene_state.get("objects", []):
+                if hint in obj.get("name", "").lower():
+                    oid = obj["id"]
+                    if oid not in seen:
+                        seen.add(oid)
+                        matched.append(oid)
+        if not matched:
+            print(f"   Fallback removal: no match for {involved}")
+            return None
+        return {
+            "action": "remove",
+            "target_object_ids": matched,
+            "reasoning": "Fallback: substring name match on involved_objects",
+        }
+
     def _llm_spatial_reasoning(self,
                                parsed_command: Dict,
                                scene_state: Dict,
@@ -208,113 +415,113 @@ class SceneAgent:
         # Prompt engineering
         prompt = f"""You are an expert spatial reasoning AI for a 3D virtual environment.
 
-    USER'S ORIGINAL REQUEST:
-    "{original_prompt}"
+        USER'S ORIGINAL REQUEST:
+        "{original_prompt}"
 
-    INTENT ANALYSIS:
-    - Command Type: {command_type}
-    - Primary Action: {action_hints.get('primary_action', 'unknown')}
-    - High-level Goal: {intent_summary}
-    - Objects Involved: {', '.join(involved_objects) if involved_objects else 'None'}
-    - Spatial Concepts: {', '.join(spatial_concepts) if spatial_concepts else 'None'}
+        INTENT ANALYSIS:
+        - Command Type: {command_type}
+        - Primary Action: {action_hints.get('primary_action', 'unknown')}
+        - High-level Goal: {intent_summary}
+        - Objects Involved: {', '.join(involved_objects) if involved_objects else 'None'}
+        - Spatial Concepts: {', '.join(spatial_concepts) if spatial_concepts else 'None'}
 
-    USER POSITION & ORIENTATION:
-    Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
-    Facing Direction (Y-rotation): {user_position.get('rotation', {}).get('y', 0):.2f} radians
+        USER POSITION & ORIENTATION:
+        Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
+        Facing Direction (Y-rotation): {user_position.get('rotation', {}).get('y', 0):.2f} radians
 
-    CURRENT SCENE OBJECTS:
-    {json.dumps(scene_objects, indent=2)}
-    {new_objects_section}
+        CURRENT SCENE OBJECTS:
+        {json.dumps(scene_objects, indent=2)}
+        {new_objects_section}
 
-    COORDINATE SYSTEM:
-    - X-axis: Left (-) to Right (+)
-    - Y-axis: Down (-) to Up (+), floor is at y=-1
-    - Z-axis: Forward (-) to Backward (+)
-    - Rotations in radians
-    - User typically faces -Z direction (forward)
+        COORDINATE SYSTEM:
+        - X-axis: Left (-) to Right (+)
+        - Y-axis: Down (-) to Up (+), floor is at y=-1
+        - Z-axis: Forward (-) to Backward (+)
+        - Rotations in radians
+        - User typically faces -Z direction (forward)
 
-    SPATIAL REASONING RULES:
-    1. "next to" = 0.5 meters offset horizontally
-    2. "in front of" = offset in -Z direction relative to reference
-    3. "behind" = offset in +Z direction
-    4. "on" = place on top (y-offset by ~0.3m above surface)
-    5. "between X and Y" = midpoint between two objects
-    6. "forward/backward/left/right" relative to USER's facing direction
-    7. For rotation: convert degrees to radians (90° = 1.5708 radians)
-    8. For multiple objects of the same type: arrange them with spacing (0.5-0.8m apart)
-    9. For aesthetic goals like "cozy" or "spacious", consider spacing and orientation
-    10. ALL objects must be placed on the floor (y = -1.0)
-    11. Ensure that all the objects manipulated are on the floor 
-    {new_objects_context}
-    {feedback_context}
+        SPATIAL REASONING RULES:
+        1. "next to" = 0.5 meters offset horizontally
+        2. "in front of" = offset in -Z direction relative to reference
+        3. "behind" = offset in +Z direction
+        4. "on" = place on top (y-offset by ~0.3m above surface)
+        5. "between X and Y" = midpoint between two objects
+        6. "forward/backward/left/right" relative to USER's facing direction
+        7. For rotation: convert degrees to radians (90° = 1.5708 radians)
+        8. For multiple objects of the same type: arrange them with spacing (0.5-0.8m apart)
+        9. For aesthetic goals like "cozy" or "spacious", consider spacing and orientation
+        10. ALL objects must be placed on the floor (y = -1.0)
+        11. Ensure that all the objects manipulated are on the floor 
+        {new_objects_context}
+        {feedback_context}
 
-    ROTATION RULES:
-    - ONLY update rotation if the command explicitly mentions rotation/orientation:
-      ✅ "rotate chair 90 degrees", "turn table around", "face the window"
-      → update: "rotation": {{"x": 0, "y": 1.57, "z": 0}}
-    
-    - For POSITION-ONLY commands, preserve existing rotation:
-      ✅ "move chair left", "place lamp closer", "shift table forward"
-    
-    - When ADDING new objects with spatial context, you MAY include rotation for logical orientation:
-      ✅ "add chair next to table" → update rotation to face table
+        ROTATION RULES:
+        - ONLY update rotation if the command explicitly mentions rotation/orientation:
+        ✅ "rotate chair 90 degrees", "turn table around", "face the window"
+        → update: "rotation": {{"x": 0, "y": 1.57, "z": 0}}
+        
+        - For POSITION-ONLY commands, preserve existing rotation:
+        ✅ "move chair left", "place lamp closer", "shift table forward"
+        
+        - When ADDING new objects with spatial context, you MAY include rotation for logical orientation:
+        ✅ "add chair next to table" → update rotation to face table
 
-    - When command is unclear about rotation, preserves existing rotation
+        - When command is unclear about rotation, preserves existing rotation
 
-    TASK:
-    Calculate EXACT position and rotation for the target object(s).
+        TASK:
+        Calculate EXACT position and rotation for the target object(s).
 
-    For MULTIPLE NEW OBJECTS (e.g., "add 3 chairs"):
-    - Arrange them in a sensible pattern (line, arc, cluster)
-    - Space them appropriately (0.5-0.8m apart)
-    - Consider user's viewing position
-    - Return array format with all objects
+        For MULTIPLE NEW OBJECTS (e.g., "add 3 chairs"):
+        - Arrange them in a sensible pattern (line, arc, cluster)
+        - Space them appropriately (0.5-0.8m apart)
+        - Consider user's viewing position
+        - Return array format with all objects
 
-    OUTPUT REQUIREMENTS:
-    - Return valid JSON only, no additional text
-    - For SINGLE object: Return single object transformation
-    - For MULTIPLE objects: Return array of transformations with "objects" key
-    - Include reasoning for spatial calculations
-    - Ensure coordinates are realistic
-    - Object IDs must match exactly
+        OUTPUT REQUIREMENTS:
+        - Return valid JSON only, no additional text
+        - For SINGLE object: Return single object transformation
+        - For MULTIPLE objects: Return array of transformations with "objects" key
+        - Include reasoning for spatial calculations
+        - Ensure coordinates are realistic
+        - Object IDs must match exactly
 
-    For SINGLE OBJECT:
-    {{
-        "object_id": "chair_01",
-        "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
-        "rotation": {{"x": 0, "y": 0, "z": 0}},
-        "action": "move",
-        "reasoning": "Moved chair closer"
-    }}
+        For SINGLE OBJECT:
+        {{
+            "object_id": "chair_01",
+            "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
+            "rotation": {{"x": 0, "y": 0, "z": 0}},
+            "action": "move",
+            "reasoning": "Moved chair closer"
+        }}
 
-    For SINGLE OBJECT (with rotation):
-    {{
-        "object_id": "chair_01",
-        "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
-        "rotation": {{"x": 0, "y": 1.57, "z": 0}},
-        "action": "place",
-        "reasoning": "Placed and rotated chair to face table"
-    }}
+        For SINGLE OBJECT (with rotation):
+        {{
+            "object_id": "chair_01",
+            "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
+            "rotation": {{"x": 0, "y": 1.57, "z": 0}},
+            "action": "place",
+            "reasoning": "Placed and rotated chair to face table"
+        }}
 
-    For MULTIPLE OBJECTS:
-    {{
-        "objects": [
-            {{
-                "object_id": "chair_01",
-                "position": {{"x": -0.4, "y": -1.0, "z": -2.0}},
-                "rotation": {{"x": 0, "y": 0, "z": 0}},
-                "action": "place"
-            }},
-            {{
-                "object_id": "chair_02",
-                "position": {{"x": 0.4, "y": -1.0, "z": -2.0}},
-                "rotation": {{"x": 0, "y": 0, "z": 0}},
-                "action": "place"
-            }}
-        ],
-        "reasoning": "Arranged in a row facing user"
-    }}
-    """
+        For MULTIPLE OBJECTS:
+        {{
+            "objects": [
+                {{
+                    "object_id": "chair_01",
+                    "position": {{"x": -0.4, "y": -1.0, "z": -2.0}},
+                    "rotation": {{"x": 0, "y": 0, "z": 0}},
+                    "action": "place"
+                }},
+                {{
+                    "object_id": "chair_02",
+                    "position": {{"x": 0.4, "y": -1.0, "z": -2.0}},
+                    "rotation": {{"x": 0, "y": 0, "z": 0}},
+                    "action": "place"
+                }}
+            ],
+            "reasoning": "Arranged in a row facing user"
+        }}
+        """
         
         # Call LLM
         try:
@@ -334,7 +541,7 @@ class SceneAgent:
                 print("⚠️ LLM output validation failed, using fallback")
                 return self._fallback_calculation(parsed_command, scene_state, user_position, new_objects_to_position)
             
-            print(f"   ✅ Spatial reasoning complete")
+            print(f"Spatial reasoning complete")
             if 'objects' in result:
                 print(f"      Positioned {len(result['objects'])} objects")
             if 'reasoning' in result:
@@ -343,16 +550,16 @@ class SceneAgent:
             return result
         
         except Exception as e:
-            print(f"❌ LLM spatial reasoning error: {e}")
+            print(f"LLM spatial reasoning error: {e}")
             return self._fallback_calculation(parsed_command, scene_state, user_position, new_objects_to_position)
         
         except json.JSONDecodeError as e:
-            print(f"❌ LLM JSON parsing error: {e}")
+            print(f"LLM JSON parsing error: {e}")
             print(f"Raw response: {response.text if 'response' in locals() else 'No response'}")
             return self._fallback_calculation(parsed_command, scene_state, user_position)
         
         except Exception as e:
-            print(f"❌ LLM spatial reasoning error: {e}")
+            print(f"LLM spatial reasoning error: {e}")
             return self._fallback_calculation(parsed_command, scene_state, user_position)
 
     def _validate_transformation(self, result: Dict) -> bool:
@@ -411,7 +618,7 @@ class SceneAgent:
         Simple fallback when LLM fails.
         Handles both existing and new objects.
         """
-        print("⚠️ Using fallback calculation")
+        print("Using fallback calculation")
         
         # If we have new objects, place them in a simple row
         if new_objects and len(new_objects) > 0:
@@ -450,7 +657,7 @@ class SceneAgent:
                 break
         
         if not target_obj:
-            print(f"❌ Target object '{target_name}' not found")
+            print(f"Target object '{target_name}' not found")
             return None
         
         current_pos = target_obj['position']
@@ -563,7 +770,7 @@ if __name__ == "__main__":
         result = agent.calculate_spatial_transformation(cmd, mock_scene, user_pos)
         
         if result:
-            print(f"\n📦 Final Result:")
+            print(f"\nFinal Result:")
             print(json.dumps(result, indent=2))
         else:
-            print("\n❌ Failed to calculate transformation")
+            print("\nFailed to calculate transformation")

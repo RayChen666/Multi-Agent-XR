@@ -1,4 +1,9 @@
-import {addObjectToScene,updateObjectPosition, updateObjectRotation} from './sceneControl.js';
+import {
+  addObjectToScene,
+  removeObjectFromScene,
+  updateObjectPosition,
+  updateObjectRotation
+} from './sceneControl.js';
 
 let ws = null;
 let loadedObjects = null;
@@ -17,15 +22,11 @@ export function setupWebSocket(objectsMap, threeScene) {
   const hostname = window.location.hostname; // Just hostname, no port
   const wsUrl = `${protocol}//${hostname}:8000/ws/scene`;
   
-
   ws = new WebSocket(wsUrl);
-  
-
-
   
   ws.onmessage = (event) => {
     const message = JSON.parse(event.data);
-    console.log('📨 Received:', message);
+    console.log('Received:', message);
 
     switch(message.type) {
       case 'object_position_updated':
@@ -36,6 +37,9 @@ export function setupWebSocket(objectsMap, threeScene) {
         break;
       case 'object_added': 
         addObjectToScene(message.data, loadedObjects, scene);
+        break;
+      case 'object_removed':
+        removeObjectFromScene(message.data, loadedObjects, scene);
         break;
       case 'scene_saved':
         console.log('Scene updated from backend');
@@ -49,14 +53,12 @@ export function setupWebSocket(objectsMap, threeScene) {
     }
   };
 
-
-
   ws.onerror = (error) => {
-    console.error('❌ WebSocket error:', error);
+    console.error('WebSocket error:', error);
   };
 
   ws.onclose = () => {
-    console.log('🔌 WebSocket disconnected, reconnecting...');
+    console.log('WebSocket disconnected, reconnecting...');
     setTimeout(() => setupWebSocket(loadedObjects, scene), 3000); // Auto-reconnect
   };
 

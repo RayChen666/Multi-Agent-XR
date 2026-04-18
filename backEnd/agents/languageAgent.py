@@ -1,5 +1,10 @@
 import json
 import google.generativeai as genai
+import os
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("API_KEY")
+
 '''
 class LanguageAgent:
     def __init__(self):
@@ -383,10 +388,11 @@ if __name__ == "__main__":
         print(f"\n📦 Output:")
         print(json.dumps(result, indent=2))
 '''
+
 class LanguageAgent:
     def __init__(self):
         # Configure Gemini API
-        genai.configure(api_key='API key')
+        genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
     def parse_prompt(self, 
@@ -411,7 +417,7 @@ class LanguageAgent:
                     context_str += f"  → Failed: {turn.get('error', 'Unknown error')}\n"
             context_str += "\nUse this history to understand pronouns (\"it\", \"them\") and implicit references.\n"
 
-        system_prompt = """You are a command analyzer for a spatial reasoning system.
+        system_prompt = """You are a command analyzer for a 3D spatial reasoning system.
         
         Analyze user commands and output JSON with:
         
@@ -468,7 +474,7 @@ class LanguageAgent:
            → involved_objects: ["chairs"]  (NOT "hockey table" - it's existing!)
            → spatial_concepts: ["next to existing hockey table"]
         
-        ✅ "add a lamp near the window"
+        ✅ "remove the lamp near the window"
            → involved_objects: ["lamp"]  (NOT "window")
            → spatial_concepts: ["near the window"]
         
@@ -496,7 +502,7 @@ class LanguageAgent:
           ✅ "add a small table"       → involved_objects: ["table"]
           ✅ "add a big lamp"          → involved_objects: ["lamp"]
         - Type-variant adjectives (ergonomic, dining, office, coffee, standing, folding) STAY with the object.
-        - Appearance adjectives (red, blue, big, small, tall, short) do NOT.
+        - Appearance adjectives (red, blue, big, small, tall, short) do NOT STAY with the object.
 
         SPATIAL CONCEPTS:
         - DON'T reduce to simple keywords
@@ -599,6 +605,20 @@ class LanguageAgent:
             }
         }
         
+        Input: "remove the coffee table"
+        {
+            "original_prompt": "remove the coffee table",
+            "command_type": "ADD/DELETE",
+            "involved_objects": ["coffee table"],
+            "spatial_concepts": ["remove coffee table"],
+            "intent_summary": "Remove the coffee table from the scene",
+            "action_hints": {
+                "primary_action": "remove",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": false
+            }
+        }
+
         Input: "arrange the dining table with 4 chairs around it and place a vase in the center"
         {
             "original_prompt": "arrange the dining table with 4 chairs around it and place a vase in the center",
@@ -636,6 +656,21 @@ class LanguageAgent:
             }
         }
         
+
+        Input: "get rid of the lamp next to the window"
+        {
+            "original_prompt": "get rid of the lamp next to the window",
+            "command_type": "ADD/DELETE",
+            "involved_objects": ["lamp"],
+            "spatial_concepts": ["next to the window"],
+            "intent_summary": "Identify and remove the specific lamp located near the window",
+            "action_hints": {
+                "primary_action": "remove",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": true
+            }
+        }
+
         Input: "make the room look more spacious"
         {
             "original_prompt": "make the room look more spacious",
@@ -701,22 +736,22 @@ class LanguageAgent:
                         'requires_spatial_reasoning': True
                     }
                 
-                print(f"✅ Language Agent analyzed:")
+                print(f"Language Agent analyzed:")
                 print(f"   Command Type: {parsed['command_type']}")
                 print(f"   Objects: {parsed['involved_objects']}")
                 print(f"   Intent: {parsed['intent_summary']}")
                 
                 return parsed
             else:
-                print(f"❌ No valid JSON in response: {response_text}")
+                print(f"No valid JSON in response: {response_text}")
                 return self._fallback_parse(prompt)
         
         except json.JSONDecodeError as e:
-            print(f"❌ JSON parsing error: {e}")
+            print(f"JSON parsing error: {e}")
             print(f"Response: {response.text}")
             return self._fallback_parse(prompt)
         except Exception as e:
-            print(f"❌ Gemini API error: {e}")
+            print(f"Gemini API error: {e}")
             return self._fallback_parse(prompt)
     
     def _fallback_parse(self, prompt: str) -> dict:

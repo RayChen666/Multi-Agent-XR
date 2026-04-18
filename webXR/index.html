@@ -17,7 +17,8 @@
 				position: fixed;
 				top: 60px;
 				left: 20px;
-				z-index: 1000;
+				z-index: 10000;
+				pointer-events: auto;
 				background: rgba(0, 0, 0, 0.85);
 				padding: 20px;
 				border-radius: 10px;
@@ -80,6 +81,27 @@
 			
 			#clear-btn:hover {
 				background: #555;
+			}
+
+			#listen-btn {
+				background: #455a64;
+				color: white;
+				border: 2px solid rgba(156, 39, 176, 0.5);
+			}
+
+			#listen-btn:hover:not(:disabled) {
+				background: #546e7a;
+			}
+
+			#listen-btn.listening {
+				background: #4caf50;
+				border-color: #66bb6a;
+				color: white;
+			}
+
+			#listen-btn:disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
 			}
 			
 			#status {
@@ -167,12 +189,23 @@
 				placeholder="e.g., move the chair forward"
 				autocomplete="off"
 			/>
+
+			<div class="button-group">
+				<button
+					type="button"
+					id="listen-btn"
+					aria-pressed="false"
+					title="Speak a command (Chromium / Web Speech API)"
+				>
+					Listen
+				</button>
+			</div>
 			
 			<div class="button-group">
-				<button id="execute-btn" onclick="executeCommand()">
+				<button type="button" id="execute-btn" onclick="executeCommand()">
 					Execute
 				</button>
-				<button id="clear-btn" onclick="clearCommand()">
+				<button type="button" id="clear-btn" onclick="clearCommand()">
 					Clear
 				</button>
 			</div>
@@ -201,7 +234,10 @@
 		<script>
 			// Natural Language Command Functions
 
-			const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
+			window.getApiBaseUrl = function () {
+				return `${window.location.protocol}//${window.location.hostname}:8000`;
+			};
+			const API_BASE_URL = window.getApiBaseUrl();
 			console.log('🔧 API URL:', API_BASE_URL);
 
 			async function executeCommand() {
@@ -260,7 +296,9 @@
 				statusDiv.textContent = message;
 				statusDiv.className = type;
 			}
-			
+
+			window.updateStatus = updateStatus;
+
 			function getUserPosition() {
 				// Try to get VR camera position from Three.js scene
 				// This will be populated by your index.js
@@ -286,6 +324,34 @@
 			
 			// Log when page loads
 			console.log('🎯 Natural Language Command Interface Ready');
+
+			// STT: dynamic import from classic script so failures are visible (static <script type="module">
+			// can fail silently on file:// or bad paths). Runs after DOM is ready.
+			(function attachSttListen() {
+				function run() {
+					import('./sttListen.js')
+						.then((m) => {
+							m.initSttPhase1({
+								getApiBaseUrl: () => window.getApiBaseUrl(),
+								setStatus: (msg, type) => window.updateStatus(msg, type),
+							});
+							console.log('🎤 STT Listen module attached');
+						})
+						.catch((err) => {
+							console.error('sttListen.js failed to load:', err);
+							const hint =
+								err && err.message
+									? err.message
+									: 'Failed to load sttListen.js (404? rebuild dev server after webpack copy)';
+							window.updateStatus(`Listen unavailable: ${hint}`, 'error');
+						});
+				}
+				if (document.readyState === 'loading') {
+					document.addEventListener('DOMContentLoaded', run);
+				} else {
+					run();
+				}
+			})();
 		</script>
 	</body>
 </html>

@@ -10,10 +10,10 @@ export async function loadSceneDatabase() {
     try {
         // Use the imported JSON directly
         sceneDatabase = sceneDataImport;
-        console.log(`✅ Scene database loaded: ${sceneDatabase.metadata.sceneName}`);
+        console.log(`Scene database loaded: ${sceneDatabase.metadata.sceneName}`);
         return sceneDatabase;
     } catch (error) {
-        console.error('❌ Failed to load scene database:', error);
+        console.error('Failed to load scene database:', error);
         throw error;
     }
 }
