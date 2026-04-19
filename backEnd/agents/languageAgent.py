@@ -438,7 +438,7 @@ if __name__ == "__main__":
         # Simple commands
         #"move the chair left",
         #"rotate the table 90 degrees",
-        "add an office desk",
+        "make this space an office",
         # "place the cup on the table",
         #"put the chair next to the desk",
         

@@ -338,7 +338,7 @@ if __name__ == "__main__":
         "intent_summary":  "Furnish an empty space as a functional office",
         "action_hints": {
             "primary_action":             "arrange",
-            "requires_asset_selection":   True,
+            "requires_asset_selection":   False,
             "requires_spatial_reasoning": True
         }
     }

@@ -15,7 +15,7 @@ from __init__ import LanguageAgent, SceneAgent, AssetAgent, CodeAgent, Verificat
 from database import Database
 from state import MASState
 from backEnd.memory.conversationManager import ConversationManager
-from backEnd.memory.memory import Memory
+from __init__  import Memory
 
 class Orchestrator:
     """
@@ -353,12 +353,37 @@ class Orchestrator:
                     }
             
             # Calculate position/rotation using Scene Agent
+
+            '''
             spatial_updates = self.scene_agent.calculate_spatial_transformation(
                 parsed_command,
                 scene_state,
                 self.user_position,
                 new_objects_to_position=object_details, 
                 feedback=feedback
+            )
+            '''
+
+            # now with the updated version we grab sceneGraph from memory context if the command route is complex/vague
+            memory_context = state.get("memory_context")
+            layout_graph = None
+            if memory_context:
+                layout_graph = (
+                    memory_context
+                    .get("semantic_layout", {})
+                    .get("layout_graph")
+                )
+                # Get raw bounds from scene_state metadata
+            room_bounds = state.get("scene_state", {}).get("metadata", {}).get("bounds")
+            
+            spatial_updates = self.scene_agent.calculate_spatial_transformation(
+                parsed_command,
+                scene_state,
+                self.user_position,
+                new_objects_to_position=object_details,
+                feedback=feedback,
+                layout_graph=layout_graph,
+                room_bounds=room_bounds,
             )
             
             if not spatial_updates:
@@ -702,10 +727,8 @@ class Orchestrator:
         return state
     
     def _memory_node(self, state: MASState) -> MASState:
+        # Memory: Retrieve relevant context for vague/complex commands
         """
-        Memory: Retrieve relevant context for vague/complex commands
-        """
-        print("Step 2: Memory Agent retrieving context...")
         
         session_id = state.get("session_id", "default")
         user_prompt = state.get("user_prompt", "")
@@ -719,7 +742,30 @@ class Orchestrator:
         }
         
         print(f"Retrieved {len(recent_context)} previous turns\n")
+
+        """
+        memory = Memory(assets_base_path=str(
+            Path(__file__).resolve().parent.parent / "webXR" / "assets"
+        ))
         
+        
+        print("Step 2: Memory Agent retrieving context...")
+        memory_context = memory.process(
+            parsed_command=state["parsed_command"],
+            scene_state=state["scene_state"],
+        )
+
+        if not memory_context:
+            print("Memory Agent failed — aborting")
+            state["success"] = False
+            state["error_message"] = "Memory Agent returned no context"
+            return state
+        
+        state["memory_context"] = memory_context
+        print(f"Memory context ready — target: {memory_context['target_room_type']}\n")
+
+
+
         return state
     
     # ============================================================================
@@ -968,13 +1014,14 @@ if __name__ == "__main__":
     # Test commands
     test_commands = [
         
+        "add a hockeny table and place it at left back corner"
         
-        "add 2 lamps and 3 tables and place them evenly"
     ]
     '''
         "rotate the table 90 degrees",
         "move the chair a little forward",
-        "move the chair to the right"
+        "move the chair to the right",
+        "add 2 lamps and 3 tables and place them evenly"
     '''
     
     for command in test_commands:

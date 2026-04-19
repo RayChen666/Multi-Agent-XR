@@ -28,7 +28,9 @@ class SceneAgent:
                                          scene_state: Dict,
                                          user_position: Dict = None,
                                          feedback: Optional[Dict] = None,
-                                         new_objects_to_position: Optional[List[Dict]] = None 
+                                         new_objects_to_position: Optional[List[Dict]] = None,
+                                         layout_graph: Optional[Dict] = None,
+                                         room_bounds=None,
                                         ) -> Dict:
         """
         Calculate the actual position and rotation for objects based on parsed command.
@@ -97,7 +99,9 @@ class SceneAgent:
             scene_state,
             user_position,
             feedback,
-            new_objects_to_position
+            new_objects_to_position,
+            layout_graph,
+            room_bounds,
         )
     
     def resolve_removal_targets(
@@ -306,7 +310,9 @@ class SceneAgent:
                                scene_state: Dict,
                                user_position: Dict,
                                feedback: Optional[Dict] = None,
-                               new_objects_to_position: Optional[List[Dict]] = None
+                               new_objects_to_position: Optional[List[Dict]] = None,
+                               layout_graph: Optional[Dict] = None,
+                               room_bounds=None,
                                ) -> Dict:
 
         # LLM context
@@ -360,6 +366,103 @@ class SceneAgent:
             
             IMPORTANT: Use this feedback to adjust your spatial reasoning and avoid the same collision.
             """
+
+
+        # Build bounds context — always inject when available (all routes)
+        bounds_context = ""
+        if room_bounds:
+            min_x = room_bounds["min"]["x"]
+            max_x = room_bounds["max"]["x"]
+            min_z = room_bounds["min"]["z"]
+            max_z = room_bounds["max"]["z"]
+            min_y = room_bounds["min"]["y"]
+            bounds_context = f"""
+
+            ROOM BOUNDS (hard limits — ALL objects MUST be placed strictly within these):
+            - Left wall:  x = {min_x}  → place objects at x ≥ {min_x + 0.3:.2f}
+            - Right wall: x = {max_x}  → place objects at x ≤ {max_x - 0.3:.2f}
+            - Back wall:  z = {min_z}  → place objects at z ≥ {min_z + 0.3:.2f}
+            - Front wall: z = {max_z}  → place objects at z ≤ {max_z - 0.3:.2f}
+            - Floor Y: {min_y}
+
+            INWARD OFFSET RULE: Always offset 0.3–0.5m inward from any wall coordinate.
+            Examples given these bounds:
+            object next to left wall        → x = {min_x + 0.5:.2f}
+            object close to back wall       → z = {min_z + 0.5:.2f}
+            object at front-left corner     → x = {min_x + 0.4:.2f}, z = {max_z - 0.4:.2f}
+            object at front-right corner    → x = {max_x - 0.4:.2f}, z = {max_z - 0.4:.2f}
+            object at back-left corner      → x = {min_x + 0.4:.2f}, z = {min_z + 0.4:.2f}
+            object at back-right corner     → x = {max_x - 0.4:.2f}, z = {min_z + 0.4:.2f}
+            """
+
+        # Build layout graph context — complex route only
+        layout_graph_context = ""
+        if layout_graph:
+            layout_graph_context = f"""
+
+            SPATIAL LAYOUT GRAPH (from Memory Agent — use this for placement):
+            This graph encodes the intended spatial relationships between furniture pieces.
+            Each edge defines how two objects should be positioned relative to each other or to room boundaries.
+            Follow these relationships as closely as possible when assigning positions.
+
+            {json.dumps(layout_graph, indent=2)}
+
+            GRAPH INTERPRETATION RULES:
+            - "next_to" with a side (e.g., "west") → place object on that side of the target, ~0.5m offset inward from wall
+            - "facing" → object should be oriented toward the target (update Y rotation accordingly)
+            - "close_to" with a side → place object near that side, ~0.3–0.5m offset
+            - "at_corner" with a corner key → place at the named room corner, offset inward 0.3–0.5m on both axes
+            - IMPORTANT: These graph edges OVERRIDE generic placement heuristics.
+            Do not apply default assumptions (e.g. "chair goes in front of desk") when a graph edge says otherwise.
+            - Wall side mapping: back_wall=most negative Z, front_wall=most positive Z, left_wall=most negative X, right_wall=most positive X
+
+            ANCHOR RULE: Place the anchor object (desk) at x=0 first, then derive all other positions from graph edges relative to it.
+            """
+
+        new_objects_context = ""
+        if new_objects_to_position and len(new_objects_to_position) > 0:
+            new_objects_context = f"""
+
+            POSITIONING NEW OBJECTS:
+            You are positioning {len(new_objects_to_position)} NEW object(s) to add to the scene:
+            """
+
+            for obj in new_objects_to_position:
+                new_objects_context += f"\n    - {obj['id']} ({obj['name']}, {obj.get('category', 'unknown')})"
+
+            if len(new_objects_to_position) > 1:
+                new_objects_context += """
+
+            MULTI-OBJECT POSITIONING REQUIREMENTS:
+            - Position ALL objects with logical spatial relationships
+            - Group similar objects together (e.g., chairs around a table)
+            - Maintain proper spacing between objects (minimum 0.3m)
+            - Consider functional arrangements (e.g., lamps for lighting, chairs for seating)
+            - Ensure aesthetic balance and avoid overcrowding
+            - All objects should be on the floor (y = -1.0)
+
+            YOU MUST return multi-object format with ALL objects:
+            {{
+            "objects": [
+                {{"object_id": "chair_03", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
+                {{"object_id": "table_02", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
+            ],
+            "reasoning": "Positioned chairs around table..."
+            }}
+            """
+            else:
+                new_objects_context += """
+
+                SINGLE NEW OBJECT:
+                Return single-object format:
+                {{
+                "object_id": "...",
+                "position": {{"x": ..., "y": -1.0, "z": ...}},
+                "rotation": {{"x": 0, "y": 0, "z": 0}},
+                "action": "place",
+                "reasoning": "Placed object at ..."
+                }}
+                """
         
         new_objects_context = ""
         if new_objects_to_position and len(new_objects_to_position) > 0:
@@ -449,6 +552,8 @@ class SceneAgent:
     10. ALL objects must be placed on the floor (y = -1.0)
     11. Ensure that all the objects manipulated are on the floor 
     {new_objects_context}
+    {bounds_context}
+    {layout_graph_context}
     {feedback_context}
 
     ROTATION RULES:
