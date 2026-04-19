@@ -31,7 +31,12 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
 1. **Go to website**:
     https://aistudio.google.com/api-keys to create your own Gemini API key following the giudeline.
 
-2. **Navigate to** *.env* file at root folder and add your own Gemini-API-Key.
+2. **Navigate to root folder**: 
+    - create *.env* file at root folder with one line code add to it:
+    ```bash
+    GEMINI_API_KEY=Your-Gemini-API-Key
+    ```
+    - add your own Gemini-API-Key generated from previous step.
 
 ## Open the project:
 0. **Install python packages in the requirements.txt**:
