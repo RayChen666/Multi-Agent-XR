@@ -59,33 +59,33 @@ class ImageAgent:
         Returns:
             semantic_layout dict or None on complete failure.
         """
-        print(f"\n🖼️  ImageAgent: extracting semantic layout for '{room_type}'...")
+        print(f"\nImageAgent: extracting semantic layout for '{room_type}'...")
 
         # Step 2: Load reference image
         image_part = self._load_reference_image(room_type)
 
         if image_part:
-            print(f"   ✅  Reference image loaded for room type '{room_type}'")
+            print(f"   Reference image loaded for room type '{room_type}'")
         else:
-            print(f"   ⚠️  No reference image found — using parametric LLM knowledge only")
+            print(f"   No reference image found — using parametric LLM knowledge only")
 
         # Step 4A-1: Enumerate all nodes first
         nodes = self._enumerate_nodes(room_type, image_part)
 
         if nodes:
-            print(f"   ✅ Node enumeration complete: {nodes}")
+            print(f"   Node enumeration complete: {nodes}")
         else:
-            print(f"   ⚠️  Node enumeration failed — falling back to edge reasoning without node list")
+            print(f"   Node enumeration failed — falling back to edge reasoning without node list")
 
         # Step 4A-2: Build edges from confirmed node list
         semantic_layout = self._reason_edges(room_type, image_part, nodes)
 
         if semantic_layout:
-            print(f"   ✅ Semantic layout extracted: "
+            print(f"   Semantic layout extracted: "
                   f"anchor='{semantic_layout.get('anchor_object')}', "
                   f"function='{semantic_layout.get('room_function')}'")
         else:
-            print(f"   ❌ Semantic layout extraction failed")
+            print(f"   Semantic layout extraction failed")
 
         return semantic_layout
     
@@ -106,7 +106,7 @@ class ImageAgent:
         
         image_path = self.assets_base / relative_path
         if not image_path.exists():
-            print(f"   ⚠️  Reference image not found at: {image_path}")
+            print(f"   Reference image not found at: {image_path}")
             return None
 
         try:
@@ -125,7 +125,7 @@ class ImageAgent:
                 }
             }
         except Exception as e:
-            print(f"   ⚠️  Failed to load reference image: {e}")
+            print(f"   Failed to load reference image: {e}")
             return None
 
     # ------------------------------
@@ -190,7 +190,7 @@ class ImageAgent:
             return parsed.get("nodes") if parsed else None
 
         except Exception as e:
-            print(f"   ❌ Node enumeration LLM error: {e}")
+            print(f"   Node enumeration LLM error: {e}")
             return None
 
     # ------------------------------
@@ -326,7 +326,7 @@ class ImageAgent:
             return self._safe_parse_json(response.text, "semantic_layout")
 
         except Exception as e:
-            print(f"   ❌ Edge reasoning LLM error: {e}")
+            print(f"   Edge reasoning LLM error: {e}")
             return None
 
     # ------------------------------
@@ -347,7 +347,7 @@ class ImageAgent:
                 try:
                     return json.loads(text[start:end])
                 except json.JSONDecodeError as e:
-                    print(f"   ❌ JSON parse error in {label}: {e}")
+                    print(f"   JSON parse error in {label}: {e}")
             return None
 
 

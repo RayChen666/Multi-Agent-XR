@@ -82,7 +82,7 @@ class Memory:
 
     def __init__(self, assets_base_path: str = None):
 
-        print("🧠 Memory module initialized")
+        print("Memory module initialized")
         
         # ImageAgent handles reference image loading + semantic layout extraction
         self.image_agent = ImageAgent(assets_base_path)
@@ -105,7 +105,7 @@ class Memory:
         Returns:
             memory_context dict or None on failure.
         """
-        print("\n🧠 MemoryAgent: starting complex-route reasoning...")
+        print("\nMemoryAgent: starting complex-route reasoning...")
 
         original_prompt = parsed_command.get("original_prompt", "")
         intent_summary  = parsed_command.get("intent_summary", original_prompt)
@@ -119,7 +119,7 @@ class Memory:
         # ── Step 2: ImageAgent → semantic layout graph ────────────────────────
         semantic_layout = self.image_agent.extract_semantic_layout(target_room_type)
         if not semantic_layout:
-            print("   ❌ ImageAgent returned no semantic layout — aborting")
+            print("   ImageAgent returned no semantic layout — aborting")
             return None
 
         # ── Step 3: derive room dimensions from scene metadata ────────────────
@@ -133,10 +133,10 @@ class Memory:
             room_dims
         )
         if not population_plan:
-            print("   ❌ Population planning failed — aborting")
+            print("   Population planning failed — aborting")
             return None
 
-        print(f"   ✅ Population plan: "
+        print(f"   Population plan: "
               f"add={len(population_plan.get('add', []))} object type(s)")
 
         # ── Step 5: assemble memory_context ──────────────────────────────────
@@ -151,7 +151,7 @@ class Memory:
         # Patch parsed_command so Asset Agent consumes the ADD list
         self._patch_parsed_command_for_asset_agent(parsed_command, population_plan)
 
-        print("   ✅ MemoryAgent complete — memory_context ready\n")
+        print("   MemoryAgent complete — memory_context ready\n")
         return memory_context
 
 
@@ -202,7 +202,7 @@ class Memory:
         nodes        = layout_graph.get("nodes", [])
 
         if not nodes:
-            print("   ⚠️  No nodes in layout_graph — using fallback")
+            print("   No nodes in layout_graph — using fallback")
             return self._fallback_population_plan()
 
         # Filter to furniture nodes only — exclude architectural + boundary nodes
@@ -218,10 +218,10 @@ class Memory:
         ]
 
         if not furniture_nodes:
-            print("   ⚠️  No furniture nodes found in layout_graph — using fallback")
+            print("   No furniture nodes found in layout_graph — using fallback")
             return self._fallback_population_plan()
 
-        print(f"   📋 Furniture nodes extracted: {furniture_nodes}")
+        print(f"   Furniture nodes extracted: {furniture_nodes}")
 
         # Build ADD list — quantity 1 per furniture type
         add_list = [
@@ -289,7 +289,7 @@ class Memory:
         parsed_command["objects_to_remove"] = population_plan.get("remove", [])
         parsed_command["objects_to_keep"]   = population_plan.get("keep",   [])
 
-        print(f"   🔧 parsed_command patched:")
+        print(f"   parsed_command patched:")
         print(f"      add    → {parsed_command.get('involved_objects', [])}")
         print(f"      remove → {parsed_command.get('objects_to_remove', [])}")
         print(f"      keep   → {parsed_command.get('objects_to_keep', [])}")
@@ -358,12 +358,12 @@ if __name__ == "__main__":
     result = agent.process(mock_parsed_command, mock_scene_state)
 
     print("\n" + "="*60)
-    print("📦 MEMORY AGENT OUTPUT (memory_context):")
+    print("MEMORY AGENT OUTPUT (memory_context):")
     print("="*60)
     print(json.dumps(result, indent=2))
 
     print("\n" + "="*60)
-    print("📦 PATCHED parsed_command (seen by Asset Agent):")
+    print("PATCHED parsed_command (seen by Asset Agent):")
     print("="*60)
     print(json.dumps(mock_parsed_command, indent=2))
 
