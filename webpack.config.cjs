@@ -59,6 +59,8 @@ const frontendConfig = {
       new CopyPlugin({
         patterns: [
           { from: 'webXR/assets', to: 'assets' },
+          // Served as a separate ES module (dynamic import from index.html); not part of index.bundle.js
+          { from: 'webXR/sttListen.js', to: 'sttListen.js' },
         ],
       }),
       

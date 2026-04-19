@@ -31,18 +31,13 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
 1. **Go to website**:
     https://aistudio.google.com/api-keys to create your own Gemini API key following the giudeline.
 
-2. **Navigate to**:
-    - */backEnd/agents* folder and insert your own API key into _ _init_ _ method of each ..agent.py file
-    <p align="center">
-    <img src="./docs/images (for README and experiment)/GenAI API insertion.png" />
-    </p>
+2. **Navigate to** *.env* file at root folder and add your own Gemini-API-Key.
 
 ## Open the project:
 0. **Install python packages in the requirements.txt**:
     ```bash
     cd backEnd
     pip install -r requirements.txt
-    pip install -U langgraph
     ```
 
 1. **Check your local IP address by running**:

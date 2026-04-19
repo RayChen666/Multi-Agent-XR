@@ -9,3 +9,5 @@ uvicorn
 websockets
 cryptography
 langgraph
+os
+dotenv

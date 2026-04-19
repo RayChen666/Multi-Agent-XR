@@ -56,7 +56,7 @@ class CodeAgent:
             reasoning = 'Single object transformation'
 
         # Process all objects
-        print(f"\n💻 Code Agent executing:")
+        print(f"\nCode Agent executing:")
         print(f"   Objects: {len(objects_to_process)}")
         if len(objects_to_process) > 1:
             print(f"   Reasoning: {reasoning}\n")
@@ -86,7 +86,7 @@ class CodeAgent:
                         "message": f"Object {object_id} not found"
                     }
                     results.append(result)
-                    print(f"      ❌ Object not found")
+                    print(f"      Object not found")
                     continue
                 
                 success = True
@@ -95,13 +95,13 @@ class CodeAgent:
                 if action in ['move', 'place'] and position:
                     success = self.database.update_object_position(object_id, position)
                     if success:
-                        print(f"      ✓ Position: ({position['x']:.2f}, {position['y']:.2f}, {position['z']:.2f})")
+                        print(f"      Position: ({position['x']:.2f}, {position['y']:.2f}, {position['z']:.2f})")
                 
                 # Execute rotation update
                 if action in ['rotate', 'move', 'place'] and rotation:
                     success = success and self.database.update_object_rotation(object_id, rotation)
                     if success:
-                        print(f"      ✓ Rotation: ({rotation['x']:.2f}, {rotation['y']:.2f}, {rotation['z']:.2f})")
+                        print(f"      Rotation: ({rotation['x']:.2f}, {rotation['y']:.2f}, {rotation['z']:.2f})")
 
                 result = {
                     "success": success,
@@ -112,7 +112,7 @@ class CodeAgent:
                 results.append(result)
 
             except Exception as e:
-                print(f"      ❌ Error: {e}")
+                print(f"      Error: {e}")
                 result = {
                     "success": False,
                     "object_id": object_id,
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     agent = CodeAgent(db)
     
     # Test single-object
-    print("\n🧪 Test 1: Single object")
+    print("\nTest 1: Single object")
     test_single = {
         'object_id': 'chair_01',
         'position': {'x': 0.5, 'y': -1.0, 'z': -1.3},
@@ -149,7 +149,7 @@ if __name__ == "__main__":
     print(f"Result: {result}\n")
     
     # Test multi-object
-    print("\n🧪 Test 2: Multiple objects")
+    print("\nTest 2: Multiple objects")
     test_multi = {
         'objects': [
             {

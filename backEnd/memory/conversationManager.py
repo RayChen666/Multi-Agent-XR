@@ -28,9 +28,9 @@ class ConversationManager:
         # In-memory cache for fast access
         self.sessions: Dict[str, List[Dict]] = self._load_from_disk()
         
-        print(f"✅ ConversationManager initialized")
-        print(f"📁 Storage: {self.storage_path}")
-        print(f"📚 Loaded {len(self.sessions)} sessions")
+        print(f"ConversationManager initialized")
+        print(f"Storage: {self.storage_path}")
+        print(f"Loaded {len(self.sessions)} sessions")
 
         def add_turn(self,
                  session_id: str,
@@ -62,7 +62,7 @@ class ConversationManager:
             # Initialize session if new
             if session_id not in self.sessions:
                 self.sessions[session_id] = []
-                print(f"🆕 Created new session: {session_id}")
+                print(f"Created new session: {session_id}")
             
             history = self.sessions[session_id]
             turn_number = len(history) + 1
@@ -114,10 +114,10 @@ class ConversationManager:
                     data = json.load(f)
                     return data
             except json.JSONDecodeError as e:
-                print(f"⚠️ Corrupted history file, starting fresh: {e}")
+                print(f"Corrupted history file, starting fresh: {e}")
                 return {}
             except Exception as e:
-                print(f"⚠️ Failed to load history: {e}")
+                print(f"Failed to load history: {e}")
                 return {}
         return {}
     
@@ -127,7 +127,7 @@ class ConversationManager:
             with open(self.storage_path, 'w') as f:
                 json.dump(self.sessions, f, indent=2)
         except Exception as e:
-            print(f"⚠️ Failed to save history: {e}")
+            print(f"Failed to save history: {e}")
 
 
     # ============================================================
@@ -152,7 +152,7 @@ class ConversationManager:
         if session_id in self.sessions:
             del self.sessions[session_id]
             self._save_to_disk()
-            print(f"🗑️ Cleared session: {session_id}")
+            print(f"Cleared session: {session_id}")
             return True
         return False
     
@@ -160,7 +160,7 @@ class ConversationManager:
         """Clear all session history"""
         self.sessions = {}
         self._save_to_disk()
-        print("🗑️ Cleared all session history")
+        print("Cleared all session history")
 
 
     def get_all_session_ids(self) -> List[str]:
@@ -181,7 +181,7 @@ class ConversationManager:
         if session_id in self.sessions:
             del self.sessions[session_id]
             self._save_to_disk()
-            print(f"🗑️ Cleared session: {session_id}")
+            print(f"Cleared session: {session_id}")
             return True
         return False
     
@@ -189,7 +189,7 @@ class ConversationManager:
         """Clear all session history"""
         self.sessions = {}
         self._save_to_disk()
-        print("🗑️ Cleared all session history")
+        print("Cleared all session history")
     
     # ============================================================
     # STATISTICS & ANALYSIS
@@ -249,7 +249,7 @@ class ConversationManager:
         stats = self.get_session_stats(session_id)
         
         print(f"\n{'='*60}")
-        print(f"📊 Session Summary: {session_id}")
+        print(f"Session Summary: {session_id}")
         print(f"{'='*60}")
         print(f"Total turns: {stats['total_turns']}")
         print(f"Successful: {stats['successful']}")
@@ -264,7 +264,7 @@ class ConversationManager:
         stats = self.get_global_stats()
         
         print(f"\n{'='*60}")
-        print(f"📊 Global Statistics")
+        print(f"Global Statistics")
         print(f"{'='*60}")
         print(f"Total sessions: {stats['total_sessions']}")
         print(f"Total turns: {stats['total_turns']}")
@@ -282,7 +282,7 @@ class ConversationManager:
         history = self.get_session_history(session_id)
         
         if not history:
-            print(f"⚠️ No history found for session: {session_id}")
+            print(f"No history found for session: {session_id}")
             return
         
         export_data = {
@@ -294,7 +294,7 @@ class ConversationManager:
         with open(filepath, 'w') as f:
             json.dump(export_data, f, indent=2)
         
-        print(f"💾 Exported session '{session_id}' to {filepath}")
+        print(f"Exported session '{session_id}' to {filepath}")
     
     def export_all_to_json(self, filepath: str):
         """Export all sessions to JSON file"""
@@ -307,7 +307,7 @@ class ConversationManager:
         with open(filepath, 'w') as f:
             json.dump(export_data, f, indent=2)
         
-        print(f"💾 Exported all sessions to {filepath}")
+        print(f"Exported all sessions to {filepath}")
     
     def export_to_csv(self, filepath: str):
         """
@@ -339,4 +339,4 @@ class ConversationManager:
                 writer.writeheader()
                 writer.writerows(rows)
         
-        print(f"📊 Exported {len(rows)} turns to {filepath}")
+        print(f"Exported {len(rows)} turns to {filepath}")

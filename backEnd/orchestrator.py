@@ -129,7 +129,7 @@ class Orchestrator:
         """Route based on command type"""
         command_type = state.get("command_type")
         
-        print(f"\n🔀 Routing: {command_type}")
+        print(f"\nRouting: {command_type}")
 
         if command_type == "ADD/DELETE":
             return "asset_agent"
@@ -149,26 +149,38 @@ class Orchestrator:
         max_iterations = state.get("max_iteration", 3)
         
         if not has_collision:
-            print("✅ Verification passed - proceeding to execution")
+            #### Temporarily disable this check since we still need to do with verification development
+            '''
+            if verification.get("valid") is False:
+                print("Verification failed — stopping before execution")
+                if not state.get("error_message"):
+                    state["error_message"] = verification.get(
+                        "message", "Verification failed"
+                    )
+                state["success"] = False
+                return "end"
+            '''
+            print("Verification passed - proceeding to execution")
+            
             return "execution_agent"
         
         if iteration_count < max_iterations:
-            print(f"🔄 Collision detected - retrying ({iteration_count + 1}/{max_iterations})")
+            print(f"Collision detected - retrying ({iteration_count + 1}/{max_iterations})")
             state["iteration_count"] = iteration_count + 1
             return "scene_agent"
         
-        print(f"❌ Max retries reached - giving up")
+        print(f"Max retries reached - giving up")
         state["error_message"] = "Max retries reached due to collisions"
         return "end"                                                  
 
     def _parse_and_decide(self, state: MASState) -> MASState:
         """Parse user prompt and decide command type"""
         print(f"\n{'='*60}")
-        print(f"🎯 Processing: '{state['user_prompt']}'")
-        print(f"📋 Session: {state.get('session_id', 'default')}")
+        print(f"Processing: '{state['user_prompt']}'")
+        print(f"Session: {state.get('session_id', 'default')}")
         print(f"{'='*60}\n")
         
-        print("🔎 Step 1: Language Agent parsing...")
+        print("Step 1: Language Agent parsing...")
 
         session_id = state.get("session_id", "default")
         recent_context = self._get_recent_context(session_id)
@@ -178,7 +190,7 @@ class Orchestrator:
             )
 
         if not parsed_command:
-            print("❌ Failed to parse command")
+            print("Failed to parse command")
             state["success"] = False
             state["error_message"] = "Parse failed"
             state["parsed_command"] = None
@@ -187,7 +199,7 @@ class Orchestrator:
         
         command_type = parsed_command.get("command_type")
         
-        print(f"✅ Parsed: {parsed_command}\n")
+        print(f"Parsed: {parsed_command}\n")
         state["parsed_command"] = parsed_command
         state["command_type"] = command_type
 
@@ -199,11 +211,11 @@ class Orchestrator:
         """
         Asset Agent: Create new objects (ADD only)
         """
-        print("🎨 Step 2: Asset Agent processing...")
+        print("Step 2: Asset Agent processing...")
         parsed_command = state.get("parsed_command")
 
         if not parsed_command:
-            print("❌ ERROR: No parsed_command in state")
+            print("ERROR: No parsed_command in state")
             state["success"] = False
             state["error_message"] = "Asset Agent requires parsed_command"
             return state
@@ -212,14 +224,14 @@ class Orchestrator:
         result = self.asset_agent.process_command(parsed_command)
 
         if not result.get("success", False):
-            print(f"❌ Asset operation failed: {result.get('message')}")
+            print(f"Asset operation failed: {result.get('message')}")
             state["success"] = False
             state["error_message"] = result.get("message", "Asset operation failed")
             return state
 
         state["selected_assets"] = result
     
-        print(f"✅ Asset operation complete: {result.get('message', '')}\n")
+        print(f"Asset operation complete: {result.get('message', '')}\n")
         return state
     
     
@@ -227,11 +239,90 @@ class Orchestrator:
         """
         Scene Agent: Calculate spatial transformations
         """
-        print("🧠 Step 3: Scene Agent calculating spatial changes...")
+        print("Step 3: Scene Agent calculating spatial changes...")
 
         parsed_command = state.get("parsed_command")
         scene_state = state.get("scene_state")
         selected_assets = state.get("selected_assets")
+
+
+        # Hygiene: upstream failure (e.g. AssetAgent) — do not run Scene logic.
+        # Note: cannot use success==False alone; initial state keeps success False until execution.
+        if state.get("error_message") and selected_assets is None:
+            print("   Skipping Scene Agent (upstream error)")
+            return state
+
+        # CASE 0: REMOVE — SceneAgent (LLM) resolves which object id(s) to delete
+        if selected_assets and selected_assets.get("action") == "remove":
+            feedback = None
+            if state.get("iteration_count", 0) > 0:
+                collision_info = state.get("collision_info", {})
+                if collision_info:
+                    feedback = {
+                        "previous_attempt": state.get("proposed_placement", {}),
+                        "collision_with": collision_info.get("colliding_objects", []),
+                        "suggestion": collision_info.get(
+                            "suggestion", "Adjust selection"
+                        ),
+                    }
+
+            parsed_for_removal = {**(parsed_command or {})}
+            ri = selected_assets.get("remove_intent")
+            if ri:
+                parsed_for_removal["remove_intent"] = ri
+
+            result = self.scene_agent.resolve_removal_targets(
+                parsed_for_removal,
+                scene_state,
+                self.user_position,
+                feedback=feedback,
+            )
+
+            if not result or not result.get("target_object_ids"):
+                print("Scene Agent could not resolve removal targets")
+                state["success"] = False
+                state["error_message"] = "Removal target resolution failed"
+                state["proposed_placement"] = None
+                return state
+
+            object_ids = list(result.get("target_object_ids", []))
+            removal_policy = {
+                "scope_hint": (ri or {}).get("scope_hint", "contextual"),
+                "original_prompt": (parsed_command or {}).get("original_prompt", ""),
+                "involved_objects": (parsed_command or {}).get("involved_objects", []),
+            }
+            if (
+                self.verification_agent.infer_removal_multiplicity(removal_policy)
+                == "single"
+                and len(object_ids) > 1
+            ):
+                before_n = len(object_ids)
+                object_ids = self.verification_agent.narrow_removal_ids_to_closest(
+                    object_ids,
+                    scene_state,
+                    self.user_position,
+                )
+                print(
+                    f"   Singular intent: narrowed {before_n} candidate(s) → 1 "
+                    f"(closest to user: {object_ids[0]})"
+                )
+                base_reason = result.get("reasoning") or ""
+                result = {
+                    **result,
+                    "reasoning": (
+                        f"{base_reason} [Narrowed to single target nearest user: {object_ids[0]}]"
+                    ).strip(),
+                }
+
+            state["proposed_placement"] = {
+                "action": "remove",
+                "object_ids": object_ids,
+                "reasoning": result.get("reasoning"),
+            }
+            print(
+                f"   Scene Agent resolved removal of {len(object_ids)} object(s)"
+            )
+            return state
 
         # CASE 1: ADD operation - Position new object
         if selected_assets and selected_assets.get("needs_positioning"):
@@ -271,7 +362,7 @@ class Orchestrator:
             )
             
             if not spatial_updates:
-                print("❌ Failed to calculate spatial updates for new object")
+                print("Failed to calculate spatial updates for new object")
                 state["success"] = False
                 state["error_message"] = "Spatial calculation failed"
                 return state
@@ -303,20 +394,20 @@ class Orchestrator:
                     new_obj["rotation"] = pos_data.get("rotation")
                     
                     if y_offset != 0.0:
-                        print(f"   ✅ {new_obj['id']} positioned at ({adjusted_position['x']:.2f}, "
+                        print(f"   {new_obj['id']} positioned at ({adjusted_position['x']:.2f}, "
                             f"{adjusted_position['y']:.2f}, {adjusted_position['z']:.2f}) "
                             f"[y_offset: {y_offset:.2f}]")
                     else:
-                        print(f"   ✅ {new_obj['id']} positioned at ({adjusted_position['x']:.2f}, "
+                        print(f"   {new_obj['id']} positioned at ({adjusted_position['x']:.2f}, "
                             f"{adjusted_position['y']:.2f}, {adjusted_position['z']:.2f})")
                     
                     complete_objects.append(new_obj)
                 else:
-                    print(f"   ⚠️ No position calculated for {new_obj['id']}")
+                    print(f"   No position calculated for {new_obj['id']}")
             
             state["proposed_placement"] = {
                 "action": "add_multiple" if len(complete_objects) > 1 else "add",
-                "complete_objects": complete_objects  # ✅ Array
+                "complete_objects": complete_objects  # Array
             }
 
         # CASE 2: normal placement action
@@ -339,7 +430,7 @@ class Orchestrator:
             )
 
             if not spatial_updates:
-                print("❌ Failed to calculate spatial updates")
+                print("Failed to calculate spatial updates")
                 state["success"] = False
                 state["error_message"] = "Spatial calculation failed"
                 state["proposed_placement"] = None
@@ -365,11 +456,11 @@ class Orchestrator:
                             "z": base_position["z"]
                         }
                         obj_update["position"] = adjusted_position
-                        print(f"   🔧 Applied y_offset ({y_offset:.2f}) to {object_id}")
+                        print(f"   Applied y_offset ({y_offset:.2f}) to {object_id}")
             '''
             state["proposed_placement"] = spatial_updates
 
-        print(f"✅ Calculated updates\n")
+        print(f"Calculated updates\n")
 
         return state
         
@@ -378,7 +469,7 @@ class Orchestrator:
         """
         Verification Agent: Check for collisions and validate placement
         """
-        print("🔍 Step 4: Verification Agent checking...")
+        print("Step 4: Verification Agent checking...")
         proposed_placement = state.get("proposed_placement", {})
         if not proposed_placement:
             state["verification_result"] = {
@@ -388,10 +479,40 @@ class Orchestrator:
             }
             return state
         
+
+        # REMOVE: dedicated validation (existence, movable/structural, singular vs plural)
+        if proposed_placement.get("action") == "remove":
+            object_ids = proposed_placement.get("object_ids", [])
+            parsed = state.get("parsed_command") or {}
+            selected = state.get("selected_assets") or {}
+            remove_intent = selected.get("remove_intent") or {}
+            removal_policy = {
+                "scope_hint": remove_intent.get("scope_hint", "contextual"),
+                "original_prompt": parsed.get("original_prompt", ""),
+                "involved_objects": parsed.get("involved_objects", []),
+                "enforce_movable_only": True,
+                "allow_structural": False,
+            }
+            state["verification_result"] = self.verification_agent.validate_removal(
+                object_ids,
+                removal_policy,
+            )
+            state["collision_info"] = None
+            return state
+
+        # ADD: proposed_placement uses complete_objects, not move/rotate shape
+        if proposed_placement.get("action") in ("add", "add_multiple"):
+            complete_objects = proposed_placement.get("complete_objects", [])
+            state["verification_result"] = (
+                self.verification_agent.validate_add_objects(complete_objects)
+            )
+            state["collision_info"] = None
+            return state
+        
         is_valid = self.verification_agent.validate_transformation(proposed_placement)
         
         if not is_valid:
-            print("❌ Invalid transformation format")
+            print("Invalid transformation format")
             state["verification_result"] = {
                 "has_collision": False,
                 "valid": False,
@@ -415,12 +536,12 @@ class Orchestrator:
             obj_state = self.database.get_object_by_id(object_id)
             
             if not obj_state:
-                print(f"⚠️  Object {object_id} not found")
+                print(f"Object {object_id} not found")
                 has_collision = True
                 colliding_objects.append(object_id)
         
         if has_collision:
-            print(f"⚠️  Collision detected with: {colliding_objects}")
+            print(f"Collision detected with: {colliding_objects}")
             state["verification_result"] = {
                 "has_collision": True,
                 "valid": False,
@@ -431,7 +552,7 @@ class Orchestrator:
                 "suggestion": "Adjust placement to avoid collision"
             }
         else:
-            print("✅ No collisions detected\n")
+            print("No collisions detected\n")
             state["verification_result"] = {
                 "has_collision": False,
                 "valid": True,
@@ -446,24 +567,74 @@ class Orchestrator:
         """
         Code Agent: Execute the spatial transformation
         """
-        print("⚙️ Step 5: Code Agent executing changes...")
+        print("Step 5: Code Agent executing changes...")
         
         proposed_placement = state.get("proposed_placement", {})
         
         if not proposed_placement:
-            print("❌ No placement to execute")
+            print("No placement to execute")
             state["success"] = False
             state["error_message"] = "No placement to execute"
             return state
         
         action = proposed_placement.get("action")
 
+        if action == "remove":
+            object_ids = proposed_placement.get("object_ids", [])
 
-        if action in ["add", "add_multiple"]:
+            removed_ids: List[str] = []
+            failed_ids: List[str] = []
+
+            removed_entries: List[Dict[str, str]] = []
+
+            for object_id in object_ids:
+                try:
+                    obj = self.database.get_object_by_id(object_id)
+                    display_name = (obj.get("name") if obj else "") or ""
+                    if self.database.remove_object(object_id):
+                        removed_ids.append(object_id)
+                        removed_entries.append(
+                            {"objectId": object_id, "name": display_name}
+                        )
+                        
+                        self.database._broadcast_update(
+                            "object_removed",
+                            {
+                                "objectId": object_id,
+                                "type": "remove",
+                                "name": display_name,
+                            },
+                        )
+                    else:
+                        failed_ids.append(object_id)
+                except Exception:
+                    failed_ids.append(object_id)
+
+            if object_ids and len(failed_ids) == 0:
+                state["success"] = True
+                state["final_actions"] = [{
+                    "success": True,
+                    "count": len(removed_ids),
+                    "action": "remove",
+                    "message": f"Removed {len(removed_ids)} object(s)",
+                    "removed": removed_entries,
+                }]
+            else:
+                state["success"] = False
+                state["error_message"] = (
+                    f"Only {len(removed_ids)}/{len(object_ids)} objects removed"
+                    if object_ids
+                    else "No objects to remove"
+                )
+                if failed_ids:
+                    state["error_message"] += f". Failed: {', '.join(failed_ids)}"
+
+
+        elif action in ["add", "add_multiple"]:
             complete_objects = proposed_placement.get("complete_objects", [])
             
             if not complete_objects:
-                print("❌ No objects to add")
+                print("No objects to add")
                 state["success"] = False
                 state["error_message"] = "No objects to add"
                 return state
@@ -489,11 +660,11 @@ class Orchestrator:
                         'name': obj['name']
                     })
                     
-                    print(f"      ✅ Successfully added\n")
+                    print(f"      Successfully added\n")
                     success_count += 1
                     
                 except Exception as e:
-                    print(f"      ❌ Failed: {e}\n")
+                    print(f"      Failed: {e}\n")
                     failed_objects.append(obj['id'])
             
             if success_count == len(complete_objects):
@@ -515,11 +686,11 @@ class Orchestrator:
             success = result.get("success", False)
             
             if success:
-                print(f"\n✅ Transformation completed successfully!")
+                print(f"\nTransformation completed successfully!")
                 state["success"] = True
                 state["final_actions"] = result.get("results", [])
             else:
-                print(f"\n❌ Transformation failed")
+                print(f"\nTransformation failed")
                 state["success"] = False
                 state["error_message"] = result.get("message", "Execution failed")
         
@@ -534,7 +705,7 @@ class Orchestrator:
         """
         Memory: Retrieve relevant context for vague/complex commands
         """
-        print("🧠 Step 2: Memory Agent retrieving context...")
+        print("Step 2: Memory Agent retrieving context...")
         
         session_id = state.get("session_id", "default")
         user_prompt = state.get("user_prompt", "")
@@ -547,7 +718,7 @@ class Orchestrator:
             "context_summary": f"Retrieved {len(recent_context)} previous turns"
         }
         
-        print(f"✅ Retrieved {len(recent_context)} previous turns\n")
+        print(f"Retrieved {len(recent_context)} previous turns\n")
         
         return state
     
@@ -614,7 +785,7 @@ class Orchestrator:
         # Initialize session if needed
         if session_id not in self.conversation_history:
             self.conversation_history[session_id] = []
-            print(f"🆕 Created new session: {session_id}")
+            print(f"Created new session: {session_id}")
         
         # Create initial state
         initial_state: MASState = {
@@ -641,7 +812,7 @@ class Orchestrator:
             return final_state.get("success", False)
         
         except Exception as e:
-            print(f"\n❌ Workflow error: {e}")
+            print(f"\nWorkflow error: {e}")
             return False
 
 
@@ -663,40 +834,40 @@ class Orchestrator:
         # initialize session history
         if session_id not in self.conversation_history:
             self.conversation_history[session_id] = []
-            print(f"🆕 Created new session: {session_id}")
+            print(f"Created new session: {session_id}")
 
         full_history = self.conversation_history[session_id]
         recent_context = full_history[-5:] if len(full_history) > 0 else []
 
         print(f"\n{'='*60}")
-        print(f"🎯 Processing command: '{user_prompt}'")
-        print(f"📋 Session: {session_id} (Turn {len(full_history) + 1})")
+        print(f"Processing command: '{user_prompt}'")
+        print(f"Session: {session_id} (Turn {len(full_history) + 1})")
         print(f"{'='*60}\n")
 
         # Phase 1: Language agent parse user command
-        print("📝 Step 1: Language Agent parsing...")
+        print("Step 1: Language Agent parsing...")
         parsed_command = self.language_agent.parse_prompt(
             user_prompt,
             context_history = recent_context
             )
 
-        print(f"✅ Parsed: {parsed_command}\n")
+        print(f"Parsed: {parsed_command}\n")
 
         if not parsed_command:
             # Store failure in history
             self._store_turn(session_id, user_prompt, parsed_command=None, 
                         success=False, error="Parse failed")
-            print (f"❌ Failed to parse command")
+            print (f"Failed to parse command")
             return False
         
         #  Phase 2: get obj state
-        print("🔍 Step 2: Getting current object states...")
+        print("Step 2: Getting current object states...")
         involved_objects = parsed_command['involved_objects']
 
         if not involved_objects:
             self._store_turn(session_id, user_prompt, parsed_command, 
                         success=False, error="No objects specified")
-            print("❌ No objects specified in command")
+            print("No objects specified in command")
             return False
 
         # Get state for ALL involved objects
@@ -705,7 +876,7 @@ class Orchestrator:
             current_state = self.verification_agent.get_object_state(obj_name)
             
             if not current_state or len(current_state) == 0:
-                print(f"⚠️  Object '{obj_name}' not found in scene")
+                print(f"Object '{obj_name}' not found in scene")
                 continue
             
             object_states.extend(current_state)
@@ -715,13 +886,13 @@ class Orchestrator:
                 print(f"   Rotation: {state['rotation']}")
         
         if not object_states:
-            print("❌ No valid objects found to process")
+            print("No valid objects found to process")
             self._store_turn(session_id, user_prompt, parsed_command,
                             object_states=[], success=False, error="No valid objects found")
             return False
 
         # Phase 3: Scene agent do the spatial reasoning
-        print("🧠 Step 3: Scene Agent calculating spatial changes...")
+        print("Step 3: Scene Agent calculating spatial changes...")
         spatial_updates = self.scene_agent.calculate_spatial_transformation(
             parsed_command,
             self.database.scene_data,
@@ -729,7 +900,7 @@ class Orchestrator:
         )
 
         if not spatial_updates:
-            print("❌ Failed to calculate spatial updates")
+            print("Failed to calculate spatial updates")
             self._store_turn(session_id, user_prompt, parsed_command,
                         object_states=object_states, spatial_updates=None,
                         success=False, error="Spatial calculation failed")
@@ -740,22 +911,22 @@ class Orchestrator:
         # Phase 4: Code agent to execute changes
         print("⚙️ Step 4: Code Agent executing changes...")
         result = self.code_agent.execute_transformation(
-            spatial_updates  # ✅ FIXED: Single argument
+            spatial_updates  # FIXED: Single argument
         )
         success = result.get('success', False) if isinstance(result, dict) else False
 
 
         if success:
-            print(f"\n✅ Command completed successfully!")
+            print(f"\nCommand completed successfully!")
             print(f"{'='*60}\n")
         else:
-            print(f"\n❌ Command failed to execute")
+            print(f"\nCommand failed to execute")
             print(f"   Error: {result.get('message', 'Unknown error')}")
 
             print(f"{'='*60}\n")
         
 
-        # ✅ Store EVERYTHING in history
+        # Store EVERYTHING in history
         self._store_turn(
             session_id=session_id,
             user_prompt=user_prompt,
