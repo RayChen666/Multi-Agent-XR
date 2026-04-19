@@ -1,10 +1,14 @@
 import json
 import google.generativeai as genai
+from pathlib import Path
+from dotenv import load_dotenv
+import os
 
 class LanguageAgent:
     def __init__(self):
         # Configure Gemini API
-        genai.configure(api_key='API')
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
     def parse_prompt(self, 

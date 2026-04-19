@@ -7,13 +7,14 @@ import google.generativeai as genai
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import Database
-
+from dotenv import load_dotenv
 
 class VerificationAgent:
     def __init__(self, database):
         # Initialize the database
         self.database = database
-        genai.configure(api_key='API')
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
     def get_object_state (self, object_name: str) -> Optional[Dict]:

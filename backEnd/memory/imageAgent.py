@@ -4,6 +4,7 @@ import base64
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from dotenv import load_dotenv
 
 
 REFERENCE_IMAGE_LIBRARY = {
@@ -35,7 +36,8 @@ class ImageAgent:
             assets_base_path: Absolute path to the webXR/assets directory.
                               Defaults to ../../webXR/assets relative to this file.
         """
-        genai.configure(api_key='API')
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel('gemini-3.1-pro-preview')
 
         if assets_base_path is None:
@@ -43,8 +45,7 @@ class ImageAgent:
             self.assets_base = repo_root / "webXR" / "assets"
         else:
             self.assets_base = Path(assets_base_path)
-        
-        print("🧠 Memory module initialized")
+
         print(f"   Assets base: {self.assets_base}")
 
     # ------------------------------

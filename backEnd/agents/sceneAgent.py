@@ -4,7 +4,8 @@ import os
 import math
 import re
 from typing import Dict, List, Optional, Tuple
-
+from dotenv import load_dotenv
+from pathlib import Path
 
 class SceneAgent:
     """
@@ -17,7 +18,8 @@ class SceneAgent:
     """
     def __init__(self, use_llm_reasoning=True):
         # Google Gemini Studio initialize
-        genai.configure(api_key='API')
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
         self.use_llm_reasoning = use_llm_reasoning
 

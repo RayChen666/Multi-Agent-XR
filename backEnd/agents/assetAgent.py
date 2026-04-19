@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional, List
 import uuid
 import re
-
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from database import Database
@@ -39,7 +39,10 @@ class AssetAgent:
         else:
             self.assets_path = Path(assets_path)
 
-        genai.configure(api_key='API')
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+        # model can be adjusted
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
         self.database = database

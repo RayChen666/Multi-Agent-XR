@@ -1,4 +1,3 @@
-import google.generativeai as genai
 import json
 import os
 from pathlib import Path
@@ -82,13 +81,11 @@ class Memory:
     """
 
     def __init__(self, assets_base_path: str = None):
-        genai.configure(api_key='API')
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
-
-        # ImageAgent handles reference image loading + semantic layout extraction
-        self.image_agent = ImageAgent(assets_base_path)
 
         print("🧠 Memory module initialized")
+        
+        # ImageAgent handles reference image loading + semantic layout extraction
+        self.image_agent = ImageAgent(assets_base_path)
 
 
     # =========================================================================
@@ -169,35 +166,6 @@ class Memory:
         Use LLM to extract target room type from user command.
         Falls back to keyword matching if the LLM call fails.
         """
-        known_list = ", ".join(REFERENCE_IMAGE_LIBRARY.keys())
-
-        prompt = f"""You are a room-type classifier.
-
-Given the user command below, identify the TARGET room type the user wants to
-convert or create. Reply with ONLY the room type as a lowercase string from
-this list:
-  {known_list}
-
-If none match, reply: unknown
-
-User command : "{original_prompt}"
-Intent       : "{intent_summary}"
-
-Reply with exactly one room type string — nothing else."""
-
-        try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.0,
-                    max_output_tokens=20,
-                )
-            )
-            room_type = response.text.strip().lower()
-            if room_type in REFERENCE_IMAGE_LIBRARY:
-                return room_type
-        except Exception as e:
-            print(f"   ⚠️  Room-type LLM call failed: {e}")
 
         # Keyword fallback
         text = (original_prompt + " " + intent_summary).lower()
