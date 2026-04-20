@@ -80,6 +80,12 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
 6. **Test update position function**:
     In the browser there is a chat box that you can type the command to manipulate the scene. Now it can take any natural language and do the spatial operation with multi-agent system setup.
 
+7. **Bonus: add your own layout and assets resources for personal VR world generation and interaction**:
+    - add reference room layout: naviagte to /webXR/assets/reference_layouts folder, add your own room.jpg for template generation. For example, adding a living_room.jpg with up-view ( Sqaure image for precise layout mimic).
+    - add objects: naviagte to /webXR/assets/gltf-glb-models folder, add your own .gltf/.glb objects. Be sure to put object file in a folder with its name, and create the metadata.json for regulating its default size.
+
+
+
 
 ## Install Immersive Web Emulator extension
 Navigate to: https://chromewebstore.google.com/detail/immersive-web-emulator/cgffilbpcibhmcfbgggfhfolhkfbhmik?hl=en&pli=1 to install the extension for your Chrome browser.
