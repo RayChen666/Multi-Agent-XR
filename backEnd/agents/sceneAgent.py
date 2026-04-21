@@ -6,6 +6,8 @@ import re
 from typing import Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from pathlib import Path
+import math
+import re
 
 class SceneAgent:
     """
@@ -106,6 +108,55 @@ class SceneAgent:
             anchor_object,
         )
     
+    def _compute_rotation(self,
+                      parsed_command: Dict,
+                      scene_state: Dict) -> Optional[float]:
+        
+        # Handle degree-based rotation commands in Python instead of LLM.
+        # Returns new Y rotation in radians, or None if not a degree rotation command.
+        
+        original_prompt = parsed_command.get("original_prompt", "").lower()
+        spatial_concepts = " ".join(parsed_command.get("spatial_concepts", [])).lower()
+        text = original_prompt + " " + spatial_concepts
+        degree_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:degrees?|°)', text)
+        if not degree_match:
+            return None
+        
+        degrees = float(degree_match.group(1))
+        radians = degrees * math.pi / 180
+
+        # Determine direction
+        if "anticlockwise" in text or "anti-clockwise" in text or "counter" in text:
+            delta = radians        # anticlockwise = positive
+        else:
+            delta = -radians       # clockwise = negative (default)
+
+        involved = parsed_command.get("involved_objects", [])
+        if not involved:
+            return None
+        object_name = involved[0].lower()
+
+        # Find current rotation from scene state
+        current_y = 0.0
+        for obj in scene_state.get("objects", []):
+            if object_name in obj.get("name", "").lower():
+                current_y = obj.get("rotation", {}).get("y", 0.0)
+                print(f"   [ROTATION] Found '{obj['name']}' current y={current_y:.4f}")
+                break
+
+        new_y = current_y + delta
+
+        # Normalize to [-π, π]
+        while new_y > math.pi:
+            new_y -= 2 * math.pi
+        while new_y < -math.pi:
+            new_y += 2 * math.pi
+
+        print(f"   [ROTATION] {degrees}° {'anti' if delta > 0 else ''}clockwise: "
+            f"{current_y:.4f} + {delta:.4f} = {new_y:.4f}")
+        return new_y
+
+
     def resolve_removal_targets(
         self,
         parsed_command: Dict,
@@ -635,13 +686,34 @@ class SceneAgent:
             }}
             """
         
+        # Check if this is a degree-based rotation — handle in Python, not LLM
+        if parsed_command.get("action_hints", {}).get("primary_action") == "rotate":
+            new_y = self._compute_rotation(parsed_command, scene_state)
+            if new_y is not None:
+                # Find the object ID
+                involved = parsed_command.get("involved_objects", [])
+                object_name = involved[0].lower() if involved else ""
+                target_obj = next(
+                    (obj for obj in scene_state.get("objects", [])
+                    if object_name in obj.get("name", "").lower()),
+                    None
+                )
+                if target_obj:
+                    print(f"   [ROTATION] Python computed y={new_y:.4f}, bypassing LLM")
+                    return {
+                        "object_id": target_obj["id"],
+                        "position": target_obj["position"],
+                        "rotation": {"x": 0, "y": new_y, "z": 0},
+                        "action": "rotate",
+                        "reasoning": f"Python-computed rotation: {new_y:.4f} radians"
+                    }
         # Call LLM
         try:
             response = self.model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.3,
-                    max_output_tokens=2048,
+                    max_output_tokens=4096,
                     response_mime_type="application/json"
                 )
             )
