@@ -244,6 +244,8 @@ class Orchestrator:
         parsed_command = state.get("parsed_command")
         scene_state = state.get("scene_state")
         selected_assets = state.get("selected_assets")
+        # Get raw bounds from scene_state metadata
+        room_bounds = state.get("scene_state", {}).get("metadata", {}).get("bounds")
 
 
         # Hygiene: upstream failure (e.g. AssetAgent) — do not run Scene logic.
@@ -367,14 +369,12 @@ class Orchestrator:
             # now with the updated version we grab sceneGraph from memory context if the command route is complex/vague
             memory_context = state.get("memory_context")
             layout_graph = None
+            anchor_object = None
             if memory_context:
-                layout_graph = (
-                    memory_context
-                    .get("semantic_layout", {})
-                    .get("layout_graph")
-                )
-                # Get raw bounds from scene_state metadata
-            room_bounds = state.get("scene_state", {}).get("metadata", {}).get("bounds")
+                semantic_layout = memory_context.get("semantic_layout", {})
+                layout_graph = semantic_layout.get("layout_graph")
+                anchor_object = semantic_layout.get("anchor_object")
+                
             
             spatial_updates = self.scene_agent.calculate_spatial_transformation(
                 parsed_command,
@@ -384,6 +384,7 @@ class Orchestrator:
                 feedback=feedback,
                 layout_graph=layout_graph,
                 room_bounds=room_bounds,
+                anchor_object=anchor_object,
             )
             
             if not spatial_updates:
@@ -451,7 +452,8 @@ class Orchestrator:
                 parsed_command,
                 scene_state,
                 self.user_position,
-                feedback=feedback
+                feedback=feedback,
+                room_bounds=room_bounds,
             )
 
             if not spatial_updates:

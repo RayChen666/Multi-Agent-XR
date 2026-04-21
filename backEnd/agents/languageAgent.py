@@ -76,7 +76,14 @@ class LanguageAgent:
         ✅ "make room cozy", "create reading corner"
         - Unclear or multi-step
         ✅ "put things in order", "set up for dinner"
+        - Room-level creation or transformation — when the object of "create/make/convert"
+          is a ROOM TYPE, not a specific asset
+        ✅ "create an office", "make this a bedroom", "convert to living room",
+           "set up an office", "turn this into a kitchen"
         - KEY: Requires planning, multiple steps, or unclear intent
+        - KEY: If "create/make/convert/set up/turn into" is followed by a ROOM TYPE
+          (office, bedroom, kitchen, living room, dining room, studio, gym, library)
+          → ALWAYS classify as Vague/Complex, NEVER ADD/DELETE
 
         INVOLVED OBJECTS - CRITICAL RULES:
         
@@ -128,6 +135,12 @@ class LanguageAgent:
           ❌ "next_to, facing"
         
         CRITICAL DISAMBIGUATION:
+        FIRST CHECK: Does the command target a ROOM TYPE?
+        Room types: office, bedroom, kitchen, living room, dining room, 
+                    studio, gym, library, workspace, meeting room
+        If "create/make/convert/set up/turn into" + ROOM TYPE → Vague/Complex immediately.
+        
+        OTHERWISE:
         Does command mention "add", "create new", "another", "delete", "remove"?
         ├─ YES → ADD/DELETE
         └─ NO → Is it "move", "rotate", "place", "put"?
@@ -300,6 +313,20 @@ class LanguageAgent:
             "action_hints": {
                 "primary_action": "arrange",
                 "requires_asset_selection": false,
+                "requires_spatial_reasoning": true
+            }
+        }
+
+        Input: "Create an office"
+        {
+            "original_prompt": "Create an office",
+            "command_type": "Vague/Complex",
+            "involved_objects": [],
+            "spatial_concepts": ["create an office environment", "composition of office furniture and layout"],
+            "intent_summary": "Set up a complete office environment with appropriate furniture",
+            "action_hints": {
+                "primary_action": "arrange",
+                "requires_asset_selection": true,
                 "requires_spatial_reasoning": true
             }
         }

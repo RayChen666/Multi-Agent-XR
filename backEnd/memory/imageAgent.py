@@ -160,7 +160,12 @@ class ImageAgent:
         - Scan the ENTIRE image systematically: top-left → top-right → center → bottom-left → bottom-right.
         - Do NOT stop after identifying the primary layout cluster.
         - Include ALL objects, even secondary or peripheral ones.
-        - Use simple lowercase names (e.g. "desk", "office_chair", "cabinet", "sofa").
+        - Use simple lowercase names (e.g. "desk", "office_chair", "cabinet_large", "cabinet_small", "sofa").
+        - If multiple instances of the same object type exist but differ in size or shape,
+          use descriptive names to distinguish them:
+          e.g. "cabinet_large", "cabinet_small", "cabinet_tall", "cabinet_short".
+        - Do NOT use generic duplicate names like ["cabinet", "cabinet"] —
+          always disambiguate by size or visual characteristic.
         - Include structural elements: walls (back_wall, left_wall, right_wall, front_wall) 
           and corners (back_left_corner, back_right_corner, front_left_corner, front_right_corner).
         - Do NOT include doors or windows as furniture nodes.
@@ -249,8 +254,16 @@ class ImageAgent:
             - "from"     : source object
             - "to"       : target object or boundary (e.g. "back_wall", "left_wall", "back_right_corner")
             - "relation" : one of [ close_to | next_to | at_corner | facing | on_surface_of | adjacent_to ]
-            - "side"     : cardinal direction from source's perspective [ north | south | east | west ]
+            - "side"     : WHERE the source object physically IS, relative to the target.
+                           Cardinal direction from TARGET's perspective looking at SOURCE.
+                           [ north | south | east | west ]
+                           Example: chair is to the EAST of desk → side: "east"
                            (omit if not applicable, e.g. at_corner)
+            - "facing"   : only used when relation is "facing".
+                           The direction the source object is ORIENTED toward.
+                           Example: chair faces WEST toward desk → 
+                               relation: "facing", side: "east" (where chair IS), 
+                               facing_direction: "west" (where chair LOOKS)
             - "corner"   : corner label if relation is at_corner
                            (e.g. "back_right", "front_left")
 
@@ -262,6 +275,12 @@ class ImageAgent:
             - "side" is always from the SOURCE object's perspective.
             - Each corner can be claimed by AT MOST one object. - 
               If two objects compete for the same corner, assign it to the one physically closest.
+            - For wall adjacency edges (next_to, close_to a wall):
+              "side" = the compass direction OF the wall itself.
+              Example: object next to left_wall  → side: "west"  (left wall IS the west wall)
+              Example: object next to back_wall  → side: "north" (back wall IS the north wall)
+              Example: object next to right_wall → side: "east"  (right wall IS the east wall)
+              Example: object next to front_wall → side: "south" (front wall IS the south wall)
 
 
         Also identify:
@@ -288,7 +307,14 @@ class ImageAgent:
                         "to":       "<corner>",
                         "relation": "at_corner",
                         "corner":   "<back_right|front_left|back_left|front_right>"
-                    }}
+                    }},
+                    {{
+                        "from":             "<object>",
+                        "to":               "<object or wall>",
+                        "relation":         "<relation>",
+                        "side":             "<north|south|east|west>  ← WHERE source IS relative to target",
+                        "facing_direction": "<north|south|east|west>  ← WHERE source LOOKS (only for 'facing' relation)"
+                    }},
                 ]
             }}
         }}
@@ -303,7 +329,8 @@ class ImageAgent:
                     {{"from": "sofa",         "to": "back_wall",    "relation": "next_to",  "side": "north"}},
                     {{"from": "coffee_table", "to": "sofa",         "relation": "close_to", "side": "south"}},
                     {{"from": "tv_stand",     "to": "sofa",         "relation": "facing",   "side": "south"}},
-                    {{"from": "lamp",         "to": "back_wall",    "relation": "at_corner", "corner": "back_right"}}
+                    {{"from": "lamp",         "to": "back_wall",    "relation": "at_corner", "corner": "back_right"}},
+                    {{"from": "office_chair", "to": "desk", "relation": "facing", "side": "east", "facing_direction": "west"}}
                 ]
             }}
         }}

@@ -31,6 +31,7 @@ class SceneAgent:
                                          new_objects_to_position: Optional[List[Dict]] = None,
                                          layout_graph: Optional[Dict] = None,
                                          room_bounds=None,
+                                         anchor_object: Optional[str] = None,
                                         ) -> Dict:
         """
         Calculate the actual position and rotation for objects based on parsed command.
@@ -102,6 +103,7 @@ class SceneAgent:
             new_objects_to_position,
             layout_graph,
             room_bounds,
+            anchor_object,
         )
     
     def resolve_removal_targets(
@@ -313,6 +315,7 @@ class SceneAgent:
                                new_objects_to_position: Optional[List[Dict]] = None,
                                layout_graph: Optional[Dict] = None,
                                room_bounds=None,
+                               anchor_object: Optional[str] = None,
                                ) -> Dict:
 
         # LLM context
@@ -379,23 +382,29 @@ class SceneAgent:
             bounds_context = f"""
 
             ROOM BOUNDS (hard limits — ALL objects MUST be placed strictly within these):
-            - Left wall:  x = {min_x}  → place objects at x ≥ {min_x + 0.3:.2f}
-            - Right wall: x = {max_x}  → place objects at x ≤ {max_x - 0.3:.2f}
-            - Back wall:  z = {min_z}  → place objects at z ≥ {min_z + 0.3:.2f}
-            - Front wall: z = {max_z}  → place objects at z ≤ {max_z - 0.3:.2f}
+            - Left wall:  x = {min_x}  → place objects at x ≥ {min_x + 0.1:.2f}
+            - Right wall: x = {max_x}  → place objects at x ≤ {max_x - 0.1:.2f}
+            - Back wall:  z = {min_z}  → place objects at z ≥ {min_z + 0.1:.2f}
+            - Front wall: z = {max_z}  → place objects at z ≤ {max_z - 0.1:.2f}
             - Floor Y: {min_y}
 
-            INWARD OFFSET RULE: Always offset 0.3–0.5m inward from any wall coordinate.
+            INWARD OFFSET RULE:
+            - "attach to wall" / "against wall" / "next to wall" → offset 0.1–0.2m inward from wall
+            - "close to wall" / "near wall"                      → offset 0.2–0.3m inward from wall
+            - General placement (not wall-specific)              → offset 0.3–0.5m inward from wall
+
             Examples given these bounds:
-            object next to left wall        → x = {min_x + 0.5:.2f}
-            object close to back wall       → z = {min_z + 0.5:.2f}
-            object at front-left corner     → x = {min_x + 0.4:.2f}, z = {max_z - 0.4:.2f}
-            object at front-right corner    → x = {max_x - 0.4:.2f}, z = {max_z - 0.4:.2f}
-            object at back-left corner      → x = {min_x + 0.4:.2f}, z = {min_z + 0.4:.2f}
-            object at back-right corner     → x = {max_x - 0.4:.2f}, z = {min_z + 0.4:.2f}
+            object attached to left wall        → x = {min_x + 0.15:.2f}
+            object attached to back wall        → z = {min_z + 0.15:.2f}
+            object close to back wall           → z = {min_z + 0.25:.2f}
+            object at front-left corner         → x = {min_x + 0.15:.2f}, z = {max_z - 0.15:.2f}
+            object at front-right corner        → x = {max_x - 0.15:.2f}, z = {max_z - 0.15:.2f}
+            object at back-left corner          → x = {min_x + 0.15:.2f}, z = {min_z + 0.15:.2f}
+            object at back-right corner         → x = {max_x - 0.15:.2f}, z = {min_z + 0.15:.2f}
             """
 
         # Build layout graph context — complex route only
+        anchor = anchor_object or "the dominant furniture piece"
         layout_graph_context = ""
         if layout_graph:
             layout_graph_context = f"""
@@ -408,15 +417,15 @@ class SceneAgent:
             {json.dumps(layout_graph, indent=2)}
 
             GRAPH INTERPRETATION RULES:
-            - "next_to" with a side (e.g., "west") → place object on that side of the target, ~0.5m offset inward from wall
+            - "next_to" with a side (e.g., "west") → place object on that side of the target, 0.1–0.2m offset inward from wall
             - "facing" → object should be oriented toward the target (update Y rotation accordingly)
-            - "close_to" with a side → place object near that side, ~0.3–0.5m offset
-            - "at_corner" with a corner key → place at the named room corner, offset inward 0.3–0.5m on both axes
+            - "close_to" with a side → place object near that side, 0.2–0.3m offset
+            - "at_corner" with a corner key → place at the named room corner, offset inward 0.1–0.2m on both axes
             - IMPORTANT: These graph edges OVERRIDE generic placement heuristics.
             Do not apply default assumptions (e.g. "chair goes in front of desk") when a graph edge says otherwise.
             - Wall side mapping: back_wall=most negative Z, front_wall=most positive Z, left_wall=most negative X, right_wall=most positive X
 
-            ANCHOR RULE: Place the anchor object (desk) at x=0 first, then derive all other positions from graph edges relative to it.
+            ANCHOR RULE: Place '{anchor}' against its designated wall first, then derive all other positions from graph edges relative to it.
             """
 
         new_objects_context = ""
@@ -436,7 +445,7 @@ class SceneAgent:
             MULTI-OBJECT POSITIONING REQUIREMENTS:
             - Position ALL objects with logical spatial relationships
             - Group similar objects together (e.g., chairs around a table)
-            - Maintain proper spacing between objects (minimum 0.3m)
+            - Maintain proper spacing between objects (minimum 0.1m)
             - Consider functional arrangements (e.g., lamps for lighting, chairs for seating)
             - Ensure aesthetic balance and avoid overcrowding
             - All objects should be on the floor (y = -1.0)
@@ -514,115 +523,117 @@ class SceneAgent:
         # Prompt engineering
         prompt = f"""You are an expert spatial reasoning AI for a 3D virtual environment.
 
-    USER'S ORIGINAL REQUEST:
-    "{original_prompt}"
+            USER'S ORIGINAL REQUEST:
+            "{original_prompt}"
 
-    INTENT ANALYSIS:
-    - Command Type: {command_type}
-    - Primary Action: {action_hints.get('primary_action', 'unknown')}
-    - High-level Goal: {intent_summary}
-    - Objects Involved: {', '.join(involved_objects) if involved_objects else 'None'}
-    - Spatial Concepts: {', '.join(spatial_concepts) if spatial_concepts else 'None'}
+            INTENT ANALYSIS:
+            - Command Type: {command_type}
+            - Primary Action: {action_hints.get('primary_action', 'unknown')}
+            - High-level Goal: {intent_summary}
+            - Objects Involved: {', '.join(involved_objects) if involved_objects else 'None'}
+            - Spatial Concepts: {', '.join(spatial_concepts) if spatial_concepts else 'None'}
 
-    USER POSITION & ORIENTATION:
-    Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
-    Facing Direction (Y-rotation): {user_position.get('rotation', {}).get('y', 0):.2f} radians
+            USER POSITION & ORIENTATION:
+            Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
+            Facing Direction (Y-rotation): {user_position.get('rotation', {}).get('y', 0):.2f} radians
 
-    CURRENT SCENE OBJECTS:
-    {json.dumps(scene_objects, indent=2)}
-    {new_objects_section}
+            CURRENT SCENE OBJECTS:
+            {json.dumps(scene_objects, indent=2)}
+            {new_objects_section}
 
-    COORDINATE SYSTEM:
-    - X-axis: Left (-) to Right (+)
-    - Y-axis: Down (-) to Up (+), floor is at y=-1
-    - Z-axis: Forward (-) to Backward (+)
-    - Rotations in radians
-    - User typically faces -Z direction (forward)
+            COORDINATE SYSTEM:
+            - X-axis: Left (-) to Right (+)
+            - Y-axis: Down (-) to Up (+), floor is at y=-1
+            - Z-axis: Forward (-) to Backward (+)
+            - Rotations in radians
+            - User typically faces -Z direction (forward)
 
-    SPATIAL REASONING RULES:
-    1. "next to" = 0.5 meters offset horizontally
-    2. "in front of" = offset in -Z direction relative to reference
-    3. "behind" = offset in +Z direction
-    4. "on" = place on top (y-offset by ~0.3m above surface)
-    5. "between X and Y" = midpoint between two objects
-    6. "forward/backward/left/right" relative to USER's facing direction
-    7. For rotation: convert degrees to radians (90° = 1.5708 radians)
-    8. For multiple objects of the same type: arrange them with spacing (0.5-0.8m apart)
-    9. For aesthetic goals like "cozy" or "spacious", consider spacing and orientation
-    10. ALL objects must be placed on the floor (y = -1.0)
-    11. Ensure that all the objects manipulated are on the floor 
-    {new_objects_context}
-    {bounds_context}
-    {layout_graph_context}
-    {feedback_context}
+            {bounds_context}
+            {layout_graph_context}
 
-    ROTATION RULES:
-    - ONLY update rotation if the command explicitly mentions rotation/orientation:
-      ✅ "rotate chair 90 degrees", "turn table around", "face the window"
-      → update: "rotation": {{"x": 0, "y": 1.57, "z": 0}}
-    
-    - For POSITION-ONLY commands, preserve existing rotation:
-      ✅ "move chair left", "place lamp closer", "shift table forward"
-    
-    - When ADDING new objects with spatial context, you MAY include rotation for logical orientation:
-      ✅ "add chair next to table" → update rotation to face table
+            SPATIAL REASONING RULES:
+            1. "next to" = 0.5 meters offset horizontally
+            2. "in front of" = offset in -Z direction relative to reference
+            3. "behind" = offset in +Z direction
+            4. "on" = place on top (y-offset by ~0.3m above surface)
+            5. "between X and Y" = midpoint between two objects
+            6. "forward/backward/left/right" relative to USER's facing direction
+            7. For rotation: convert degrees to radians (90° = 1.5708 radians)
+            8. For multiple objects of the same type: arrange them with spacing (0.5-0.8m apart)
+            9. For aesthetic goals like "cozy" or "spacious", consider spacing and orientation
+            10. ALL objects must be placed on the floor (y = -1.0)
+            11. Ensure that all the objects manipulated are on the floor 
+            
+            {new_objects_context}
+            {feedback_context}
 
-    - When command is unclear about rotation, preserves existing rotation
+            ROTATION RULES:
+            - ONLY update rotation if the command explicitly mentions rotation/orientation:
+            ✅ "rotate chair 90 degrees", "turn table around", "face the window"
+            → update: "rotation": {{"x": 0, "y": 1.57, "z": 0}}
+            
+            - For POSITION-ONLY commands, preserve existing rotation:
+            ✅ "move chair left", "place lamp closer", "shift table forward"
+            
+            - When ADDING new objects with spatial context, you MAY include rotation for logical orientation:
+            ✅ "add chair next to table" → update rotation to face table
 
-    TASK:
-    Calculate EXACT position and rotation for the target object(s).
+            - When command is unclear about rotation, preserves existing rotation
 
-    For MULTIPLE NEW OBJECTS (e.g., "add 3 chairs"):
-    - Arrange them in a sensible pattern (line, arc, cluster)
-    - Space them appropriately (0.5-0.8m apart)
-    - Consider user's viewing position
-    - Return array format with all objects
+            TASK:
+            Calculate EXACT position and rotation for the target object(s).
 
-    OUTPUT REQUIREMENTS:
-    - Return valid JSON only, no additional text
-    - For SINGLE object: Return single object transformation
-    - For MULTIPLE objects: Return array of transformations with "objects" key
-    - Include reasoning for spatial calculations
-    - Ensure coordinates are realistic
-    - Object IDs must match exactly
+            For MULTIPLE NEW OBJECTS (e.g., "add 3 chairs"):
+            - Arrange them in a sensible pattern (line, arc, cluster)
+            - Space them appropriately (0.5-0.8m apart)
+            - Consider user's viewing position
+            - Return array format with all objects
 
-    For SINGLE OBJECT:
-    {{
-        "object_id": "chair_01",
-        "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
-        "rotation": {{"x": 0, "y": 0, "z": 0}},
-        "action": "move",
-        "reasoning": "Moved chair closer"
-    }}
+            OUTPUT REQUIREMENTS:
+            - Return valid JSON only, no additional text
+            - For SINGLE object: Return single object transformation
+            - For MULTIPLE objects: Return array of transformations with "objects" key
+            - Include reasoning for spatial calculations
+            - Ensure coordinates are realistic
+            - Object IDs must match exactly
 
-    For SINGLE OBJECT (with rotation):
-    {{
-        "object_id": "chair_01",
-        "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
-        "rotation": {{"x": 0, "y": 1.57, "z": 0}},
-        "action": "place",
-        "reasoning": "Placed and rotated chair to face table"
-    }}
-
-    For MULTIPLE OBJECTS:
-    {{
-        "objects": [
+            For SINGLE OBJECT:
             {{
                 "object_id": "chair_01",
-                "position": {{"x": -0.4, "y": -1.0, "z": -2.0}},
+                "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
                 "rotation": {{"x": 0, "y": 0, "z": 0}},
-                "action": "place"
-            }},
-            {{
-                "object_id": "chair_02",
-                "position": {{"x": 0.4, "y": -1.0, "z": -2.0}},
-                "rotation": {{"x": 0, "y": 0, "z": 0}},
-                "action": "place"
+                "action": "move",
+                "reasoning": "Moved chair closer"
             }}
-        ],
-        "reasoning": "Arranged in a row facing user"
-    }}
-    """
+
+            For SINGLE OBJECT (with rotation):
+            {{
+                "object_id": "chair_01",
+                "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
+                "rotation": {{"x": 0, "y": 1.57, "z": 0}},
+                "action": "place",
+                "reasoning": "Placed and rotated chair to face table"
+            }}
+
+            For MULTIPLE OBJECTS:
+            {{
+                "objects": [
+                    {{
+                        "object_id": "chair_01",
+                        "position": {{"x": -0.4, "y": -1.0, "z": -2.0}},
+                        "rotation": {{"x": 0, "y": 0, "z": 0}},
+                        "action": "place"
+                    }},
+                    {{
+                        "object_id": "chair_02",
+                        "position": {{"x": 0.4, "y": -1.0, "z": -2.0}},
+                        "rotation": {{"x": 0, "y": 0, "z": 0}},
+                        "action": "place"
+                    }}
+                ],
+                "reasoning": "Arranged in a row facing user"
+            }}
+            """
         
         # Call LLM
         try:
