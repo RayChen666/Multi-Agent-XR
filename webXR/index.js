@@ -7,7 +7,7 @@ import { gsap } from 'gsap';
 import { init } from './init.js';
 import { loadSceneDatabase, getSceneDatabase, SceneQuery } from '../middleware/sceneLoader.js';
 import { setupWebSocket } from '../middleware/wsManager.js';
-import { initHeadTracking, startHeadTracking, updateHeadTracking } from '../middleware/sceneControl.js';
+import { initHeadTracking, startHeadTracking, updateHeadTracking, toggleAABB  } from '../middleware/sceneControl.js';
 
 
 // Global scene query interface for agents
@@ -55,6 +55,15 @@ async function setupScene({ scene, camera, renderer, player, controllers }) {
   // head tracking
   // Add websocket
   websocket = setupWebSocket(loadedObjects, scene);
+
+
+  // toggle AABB with '\ key
+  window.addEventListener('keydown', (e) => {
+
+      if (e.key === '\\') toggleAABB();
+  });
+
+
   initHeadTracking(websocket);
 
   renderer.xr.addEventListener('sessionstart', async() =>{
@@ -180,6 +189,29 @@ function loadObjects(scene) {
 
           scene.add(gltf.scene);
           loadedObjects.set(objData.id, gltf.scene);
+
+
+          // AABB helper — child of gltf.scene, follows position/rotation automatically
+          if (objData.collision) {
+              const { width, height, depth } = objData.collision;
+              const sx = objData.scale.x, sy = objData.scale.y, sz = objData.scale.z;
+
+              const geo = new THREE.BoxGeometry(width / sx, height / sy, depth / sz);
+              const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+                  color: 0x00ff00, transparent: true, opacity: 0.15,
+                  side: THREE.DoubleSide, depthWrite: false
+              }));
+              mesh.add(new THREE.LineSegments(
+                  new THREE.EdgesGeometry(geo),
+                  new THREE.LineBasicMaterial({ color: 0x00ff00 })
+              ));
+              mesh.position.set(0, (height / sy) / 2, 0);
+              mesh.visible = false; // hidden by default, toggle with B
+              mesh.name = 'aabb_helper';
+              gltf.scene.add(mesh);
+          }
+
+
           console.log(`✓ Loaded: ${objData.name} (${objData.id})`);
           resolve();
         },

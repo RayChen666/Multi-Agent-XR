@@ -1,31 +1,36 @@
 {
-    "name": "chair",
-    "category": "furniture",
-    "subcategory": "seating",
-    "default_scale": {
-      "x": 0.005,
-      "y": 0.005,
-      "z": 0.005
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": true,
-      "weight": "light"
-    },
-    "typical_dimensions": {
-      "width": 0.2,
-      "height": 0.5,
-      "depth": 0.2
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "seat",
-      "dining chair"
-    ],
-    "description": "A standard dining chair suitable for seating at tables"
+  "name": "chair",
+  "category": "furniture",
+  "subcategory": "seating",
+  "default_scale": {
+    "x": 0.005,
+    "y": 0.005,
+    "z": 0.005
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": true,
+    "weight": "light"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "seat",
+    "dining chair"
+  ],
+  "description": "A standard dining chair suitable for seating at tables",
+  "collision": {
+    "width": 0.173,
+    "height": 0.271,
+    "depth": 0.175
   }
+}

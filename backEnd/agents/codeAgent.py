@@ -18,7 +18,7 @@ class CodeAgent:
     """
 
     def __init__(self, database: Database):
-        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        # self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
         self.database = database
 
     def execute_transformation(self, transformation: Dict) -> Dict:

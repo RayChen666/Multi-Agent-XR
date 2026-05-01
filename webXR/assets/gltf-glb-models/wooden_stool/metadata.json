@@ -1,32 +1,37 @@
 {
-    "name": "wooden stool",
-    "category": "furniture",
-    "subcategory": "seating",
-    "default_scale": {
-      "x": 0.003,
-      "y": 0.003,
-      "z": 0.003
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": true,
-      "weight": "light"
-    },
-    "typical_dimensions": {
-      "width": 0.1,
-      "height": 0.4,
-      "depth": 0.1
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "stool",
-      "wooden seat",
-      "bar stool"
-    ],
-    "description": "A simple wooden stool for seating, compact and lightweight"
+  "name": "wooden stool",
+  "category": "furniture",
+  "subcategory": "seating",
+  "default_scale": {
+    "x": 0.003,
+    "y": 0.003,
+    "z": 0.003
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": true,
+    "weight": "light"
+  },
+  "typical_dimensions": {
+    "width": 0.1,
+    "height": 0.4,
+    "depth": 0.1
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "stool",
+    "wooden seat",
+    "bar stool"
+  ],
+  "description": "A simple wooden stool for seating, compact and lightweight",
+  "collision": {
+    "width": 0.121,
+    "height": 0.181,
+    "depth": 0.121
   }
+}

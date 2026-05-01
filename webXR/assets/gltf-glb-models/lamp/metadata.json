@@ -1,32 +1,37 @@
 {
-    "name": "lamp",
-    "category": "furniture",
-    "subcategory": "lighting",
-    "default_scale": {
-      "x": 0.025,
-      "y": 0.025,
-      "z": 0.025
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canTurnOn": true,
-      "weight": "light"
-    },
-    "typical_dimensions": {
-      "width": 0.1,
-      "height": 0.4,
-      "depth": 0.1
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "table lamp",
-      "light",
-      "desk lamp"
-    ],
-    "description": "A table lamp that can be placed on surfaces and turned on/off"
+  "name": "lamp",
+  "category": "furniture",
+  "subcategory": "lighting",
+  "default_scale": {
+    "x": 0.025,
+    "y": 0.025,
+    "z": 0.025
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canTurnOn": true,
+    "weight": "light"
+  },
+  "typical_dimensions": {
+    "width": 0.1,
+    "height": 0.4,
+    "depth": 0.1
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "table lamp",
+    "light",
+    "desk lamp"
+  ],
+  "description": "A table lamp that can be placed on surfaces and turned on/off",
+  "collision": {
+    "width": 0.55,
+    "height": 0.831,
+    "depth": 0.545
   }
+}

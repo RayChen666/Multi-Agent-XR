@@ -1,31 +1,36 @@
 {
-    "name": "scooter",
-    "category": "vehicle",
-    "subcategory": "personal_transport",
-    "default_scale": {
-      "x": 0.008,
-      "y": 0.008,
-      "z": 0.008
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canRide": false,
-      "weight": "medium"
-    },
-    "typical_dimensions": {
-      "width": 0.2,
-      "height": 0.3,
-      "depth": 0.4
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "kick scooter",
-      "push scooter"
-    ],
-    "description": "A personal scooter vehicle, decorative item (not rideable in this scene)"
+  "name": "scooter",
+  "category": "vehicle",
+  "subcategory": "personal_transport",
+  "default_scale": {
+    "x": 0.008,
+    "y": 0.008,
+    "z": 0.008
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canRide": false,
+    "weight": "medium"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.3,
+    "depth": 0.4
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "kick scooter",
+    "push scooter"
+  ],
+  "description": "A personal scooter vehicle, decorative item (not rideable in this scene)",
+  "collision": {
+    "width": 0.327,
+    "height": 0.352,
+    "depth": 0.143
   }
+}
