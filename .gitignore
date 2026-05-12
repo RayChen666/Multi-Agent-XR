@@ -1,2 +1,4 @@
 node_modules
 .env
+backEnd/cert.pem
+backEnd/key.pem
