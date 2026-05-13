@@ -47,8 +47,10 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
 
 2. **Create key.pem and cert.pem in backEnd folder**:
     ```bash
-    openssl req -x509 -newkey rsa:4096 -keyout backEnd/key.pem -out backEnd/cert.pem -days 365 -nodes
+    cd backEnd
+    openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
     ```
+    Note: if this is your first time create permission files, just hit *enter* for all questiones popped up for local development.
     
 3. **Check your local IP address by running**:
     ```bash
@@ -66,10 +68,12 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
 5. **Open the terminal in the root project folder**:
     if you just want to test the backend, open terminal in *backEnd* folder, run 
     ```bash
+    cd backEnd
     python main.py
     ```
     if you just want to test the frontend, open another terminal, navigate to the project root folder and run
     ```bash
+    cd Multi-Agent-XR
     npm run dev
     ```
 6. **Trust certificate on devices:**
