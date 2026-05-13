@@ -205,7 +205,14 @@ function loadObjects(scene) {
                   new THREE.EdgesGeometry(geo),
                   new THREE.LineBasicMaterial({ color: 0x00ff00 })
               ));
-              mesh.position.set(0, (height / sy) / 2, 0);
+              // mesh.position.set(0, (height / sy) / 2, 0);
+              const offset = objData.collision.offset;
+              mesh.position.set(
+                  (offset?.x ?? 0) / sx,
+                  (offset?.y ?? height / 2) / sy,  // fallback to old behavior if no offset
+                  (offset?.z ?? 0) / sz
+              );
+
               mesh.visible = false; // hidden by default, toggle with B
               mesh.name = 'aabb_helper';
               gltf.scene.add(mesh);

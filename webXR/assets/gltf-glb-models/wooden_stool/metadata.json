@@ -32,6 +32,11 @@
   "collision": {
     "width": 0.121,
     "height": 0.181,
-    "depth": 0.121
+    "depth": 0.121,
+    "offset": {
+      "x": 0.0,
+      "y": 0.09,
+      "z": 0.0
+    }
   }
 }

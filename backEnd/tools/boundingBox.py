@@ -36,15 +36,31 @@ def extract_collision_dims(assets_path: Path):
 
         try:
             mesh = trimesh.load(str(model_path), force='mesh')
-            bounds = mesh.bounds  # [[min_x,min_y,min_z], [max_x,max_y,max_z]]
+            # [[min_x,min_y,min_z], [max_x,max_y,max_z]]
+            bounds = mesh.bounds  
             raw = bounds[1] - bounds[0]
 
+            # calculate the geometric center of the bounding box
+            center = (bounds[0] + bounds[1]) / 2
+
+            '''
             meta["collision"] = {
                 "width":  round(float(raw[0] * scale["x"]), 3),
                 "height": round(float(raw[1] * scale["y"]), 3),
                 "depth":  round(float(raw[2] * scale["z"]), 3)
             }
-
+            '''
+            meta["collision"] = {
+                "width":  round(float(raw[0] * scale["x"]), 3),
+                "height": round(float(raw[1] * scale["y"]), 3),
+                "depth":  round(float(raw[2] * scale["z"]), 3),
+                "offset": {
+                    "x": round(float(center[0] * scale["x"]), 3),
+                    "y": round(float(center[1] * scale["y"]), 3),
+                    "z": round(float(center[2] * scale["z"]), 3),
+                }
+            }
+            
             with open(metadata_path, "w") as f:
                 json.dump(meta, f, indent=2)
             
