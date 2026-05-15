@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import google.generativeai as genai
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.aabbCheck import check_proposed_objects
 from database import Database
 from dotenv import load_dotenv
 
@@ -127,6 +128,7 @@ class VerificationAgent:
         
         return True
     
+    '''
     def validate_add_objects(self, complete_objects: List[Dict]) -> Dict:
         """
         Validate proposed_placement for add / add_multiple (not move/rotate shape).
@@ -190,6 +192,69 @@ class VerificationAgent:
             "valid": True,
             "message": "Verification passed",
             "has_collision": False,
+        }
+    '''
+
+    def validate_add_objects(self, complete_objects: List[Dict]) -> Dict:
+        """
+        Validate proposed placement for add / add_multiple.
+        Runs schema check first, then AABB geometric collision check.
+
+        Returns:
+            { "valid": bool, "message": str, "has_collision": bool, "violations": list }
+        """
+        if not complete_objects:
+            return {
+                "valid": False,
+                "message": "No objects to add",
+                "has_collision": False,
+                "violations": []
+            }
+        
+        # Stage 1: Schema validation
+        for i, obj in enumerate(complete_objects):
+            if not isinstance(obj, dict):
+                return {"valid": False, "message": f"Object entry {i} is not a dict",
+                        "has_collision": False, "violations": []}
+            
+            for field in ("id", "name", "position", "rotation"):
+                if field not in obj:
+                    return {"valid": False, "message": f"Missing {field} for object at index {i}",
+                        "has_collision": False, "violations": []}
+                
+            pos = obj["position"]
+            rot = obj["rotation"]
+
+            if not isinstance(pos, dict) or not all(k in pos for k in ("x", "y", "z")):
+                return {"valid": False, "message": f"Invalid position for {obj.get('id', i)}",
+                    "has_collision": False, "violations": []}
+            if not isinstance(rot, dict) or not all(k in rot for k in ("x", "y", "z")):
+                return {"valid": False, "message": f"Invalid rotation for {obj.get('id', i)}",
+                    "has_collision": False, "violations": []}
+            if self.database.get_object_by_id(obj["id"]):
+                return {"valid": False, "message": f"Object id already exists in scene: {obj['id']}",
+                        "has_collision": False, "violations": []}
+            
+        # Stage 2: Collision check (AABB)
+        existing_objects = self.database.scene_data.get('objects', [])
+        violations = check_proposed_objects(complete_objects, existing_objects)
+
+        if violations:
+            print(f"  AABB collision detected: {len(violations)} violation(s)")
+            for v in violations:
+                print(f"    {v['mover']} ↔ {v['anchor']} overlap={v['overlap']}")
+            return {
+                "valid": False,
+                "message": f"Geometric collision detected between {len(violations)} object pair(s)",
+                "has_collision": True,
+                "violations": violations
+            }
+        
+        return {
+            "valid": True,
+            "message": "Verification passed",
+            "has_collision": False,
+            "violations": []
         }
 
     def _infer_removal_multiplicity(self, policy: Dict) -> str:

@@ -74,6 +74,7 @@ class Orchestrator:
         workflow.add_node("verification_agent", self._verification_node)
         workflow.add_node("execution_agent", self._execution_node)
         workflow.add_node("memory", self._memory_node)
+        workflow.add_node("increment_iteration", self._increment_iteration)
         
         # Set entry point
         workflow.set_entry_point("parse_decider")
@@ -107,11 +108,13 @@ class Orchestrator:
             self._check_verification_result,
             {
                 "execution_agent": "execution_agent", # No collision -> continue
-                "scene_agent": "scene_agent", # Collision detected -> iterate back
+                #"scene_agent": "scene_agent",
+                "increment_iteration": "increment_iteration",
                 "end": END
             }
         )
-
+        # increment → back to scene for retry
+        workflow.add_edge("increment_iteration", "scene_agent")
         # Iterate back to the initial state
         workflow.add_edge("execution_agent", END)
 
@@ -138,19 +141,17 @@ class Orchestrator:
         else:  # Vague/Complex
             return "memory"
 
-    def _check_verification_result(self, state: MASState) -> Literal["execution_agent", 
-                                                                     "scene_agent", 
+    def _check_verification_result(self, state: MASState) -> Literal["execution_agent",  
+                                                                     "increment_iteration",
                                                                      "end"]:
         """Decide what to do based on verification result"""
-        verification = state.get("verification_result", {})
         verification = state.get("verification_result", {})
         has_collision = verification.get("has_collision", False)
         iteration_count = state.get("iteration_count", 0)
         max_iterations = state.get("max_iteration", 3)
         
         if not has_collision:
-            #### Temporarily disable this check since we still need to do with verification development
-            '''
+            
             if verification.get("valid") is False:
                 print("Verification failed — stopping before execution")
                 if not state.get("error_message"):
@@ -159,18 +160,19 @@ class Orchestrator:
                     )
                 state["success"] = False
                 return "end"
-            '''
+            
             print("Verification passed - proceeding to execution")
             
             return "execution_agent"
         
         if iteration_count < max_iterations:
             print(f"Collision detected - retrying ({iteration_count + 1}/{max_iterations})")
-            state["iteration_count"] = iteration_count + 1
-            return "scene_agent"
+            #state["iteration_count"] = iteration_count + 1
+            #return "scene_agent"
+            return "increment_iteration"
         
         print(f"Max retries reached - giving up")
-        state["error_message"] = "Max retries reached due to collisions"
+        #state["error_message"] = "Max retries reached due to collisions"
         return "end"                                                  
 
     def _parse_and_decide(self, state: MASState) -> MASState:
@@ -262,7 +264,8 @@ class Orchestrator:
                 if collision_info:
                     feedback = {
                         "previous_attempt": state.get("proposed_placement", {}),
-                        "collision_with": collision_info.get("colliding_objects", []),
+                        #"collision_with": collision_info.get("colliding_objects", []),
+                        "colliding_pairs": collision_info.get("colliding_pairs", []),
                         "suggestion": collision_info.get(
                             "suggestion", "Adjust selection"
                         ),
@@ -350,7 +353,8 @@ class Orchestrator:
                 if collision_info:
                     feedback = {
                         "previous_attempt": state.get("proposed_placement"),
-                        "collision_with": collision_info.get("colliding_objects", []),
+                        #"collision_with": collision_info.get("colliding_objects", []),
+                        "colliding_pairs": collision_info.get("colliding_pairs", []),
                         "suggestion": collision_info.get("suggestion", "Try alternative placement")
                     }
             
@@ -444,7 +448,8 @@ class Orchestrator:
                 if collision_info:
                     feedback = {
                         "previous_attempt": state.get("proposed_placement", {}),
-                        "collision_with": collision_info.get("colliding_objects", []),
+                        #"collision_with": collision_info.get("colliding_objects", []),
+                        "colliding_pairs": collision_info.get("colliding_pairs", []),
                         "suggestion": collision_info.get("suggestion", "Try alternative placement")
                     }
 
@@ -527,7 +532,7 @@ class Orchestrator:
             state["collision_info"] = None
             return state
 
-        # ADD: proposed_placement uses complete_objects, not move/rotate shape
+        '''
         if proposed_placement.get("action") in ("add", "add_multiple"):
             complete_objects = proposed_placement.get("complete_objects", [])
             state["verification_result"] = (
@@ -588,7 +593,109 @@ class Orchestrator:
             state["collision_info"] = None
         
         return state
+        '''
+        # ADD: proposed_placement uses complete_objects, not move/rotate shape
+        if proposed_placement.get("action") in ("add", "add_multiple"):
+            complete_objects = proposed_placement.get("complete_objects", [])
+            result = self.verification_agent.validate_add_objects(complete_objects)
+            state["verification_result"] = result
+
+            # populate collision_info for SceneAgent retry context
+            if result.get("has_collision") and result.get("violations"):
+                state["collision_info"] = {
+                    "colliding_pairs": [
+                        {
+                            "mover": v["mover"],
+                            "anchor": v["anchor"],
+                            "overlap": v["overlap"],
+                            "mover_position": v["mover_position"],
+                            "anchor_position": v["anchor_position"],
+                            "suggestion": v.get("suggestion", "Reposition to avoid overlap"),
+                        }
+                        for v in result["violations"]
+                    ],
+                    "suggestion": "Reposition mover objects to eliminate overlaps"
+                }
+            else:
+                state["collision_info"] = None
+
+            return state
+
+        # POS/ROTATE — schema check then AABB against existing scene
+        is_valid = self.verification_agent.validate_transformation(proposed_placement)
+
+        if not is_valid:
+            print("Invalid transformation format")
+            state["verification_result"] = {
+                "has_collision": False,
+                "valid": False,
+                "message": "Invalid format"
+            }
+            state["collision_info"] = None
+            return state
+
+        # build proposed object list from transformation
+        if "objects" in proposed_placement:
+            moved_objects = proposed_placement["objects"]
+        else:
+            moved_objects = [proposed_placement]
+
+        # get full object data for each moved object (needs collision dims)
+        proposed = []
+        for transform in moved_objects:
+            obj_id = transform.get("object_id")
+            obj = self.database.get_object_by_id(obj_id)
+            if obj:
+                proposed.append({
+                    **obj,
+                    "position": transform["position"],  # use NEW position
+                })
+
+        # existing scene excluding the moved objects themselves
+        moved_ids = {o["id"] for o in proposed}
+        existing = [
+            o for o in self.database.scene_data.get("objects", [])
+            if o["id"] not in moved_ids
+        ]
+
+        from tools.aabbCheck import check_proposed_objects
+        violations = check_proposed_objects(proposed, existing)
+
+        if violations:
+            print(f"  POS/ROTATE collision detected: {len(violations)} violation(s)")
+            state["verification_result"] = {
+                "has_collision": True,
+                "valid": False,
+                "message": f"Movement causes collision with {len(violations)} object(s)",
+                "violations": violations
+            }
+            state["collision_info"] = {
+                "colliding_pairs": [
+                    {
+                        "mover": v["mover"],
+                        "anchor": v["anchor"],
+                        "overlap": v["overlap"],
+                        "mover_position": v["mover_position"],
+                        "anchor_position": v["anchor_position"],
+                        "suggestion": v.get("suggestion", "Reposition to avoid overlap"),
+                    }
+                    for v in violations
+                ],
+                "suggestion": "Reposition mover objects to eliminate overlaps"
+            }
+        else:
+            print("No collisions detected\n")
+            state["verification_result"] = {
+                "has_collision": False,
+                "valid": True,
+                "message": "Verification passed"
+            }
+            state["collision_info"] = None
+
+        return state
     
+        
+
     
     def _execution_node(self, state: MASState) -> MASState:
         """
@@ -773,6 +880,11 @@ class Orchestrator:
     # ============================================================================
     # HELPER METHODS
     # ============================================================================
+
+    def _increment_iteration(self, state: MASState) -> MASState:
+        state["iteration_count"] = state.get("iteration_count", 0) + 1
+        print(f"   Iteration count: {state['iteration_count']}")
+        return state
 
     def _get_recent_context(self, session_id: str, limit: int = 5) -> List[Dict]:
         """Get recent conversation context for a session"""

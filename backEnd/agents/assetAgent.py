@@ -113,6 +113,7 @@ class AssetAgent:
                     "properties": metadata["properties"],
                     "typical_dimensions": metadata.get("typical_dimensions"),
                     "default_rotation": metadata.get("default_rotation"),
+                    "collision": metadata.get("collision"),
                     "has_metadata": True
                 }
                 
@@ -383,7 +384,7 @@ class AssetAgent:
             "rotation": None,  # Scene Agent will set
             "scale": template["default_scale"].copy(),
             "y_offset": template.get("y_offset", 0.0),
-            "boundingBox": None,  # Scene Agent will calculate
+            "collision": template.get("collision"),
             "properties": template["properties"].copy(),
             "spatialRelations": {
                 "on": "floor_01",  # Default

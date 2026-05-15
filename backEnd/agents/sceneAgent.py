@@ -411,14 +411,19 @@ class SceneAgent:
         # Build feedback context if this is an iteration
         feedback_context = ""
         if feedback:
+            collision_pairs = feedback.get('colliding_pairs', [])
+            collision_lines = ""
+            for pair in collision_pairs:
+                collision_lines += f"\n    - {pair.get('suggestion', 'Reposition to avoid overlap')}"
+
             feedback_context = f"""
             
-            FEEDBACK FROM PREVIOUS ATTEMPT:
-            Previous placement: {json.dumps(feedback.get('previous_attempt', {}), indent=2)}
-            Collision with: {feedback.get('collision_with', [])}
-            Suggestion: {feedback.get('suggestion', 'Try alternative placement')}
+            COLLISION DETECTED FROM PREVIOUS ATTEMPT:
+            {collision_lines}
             
-            IMPORTANT: Use this feedback to adjust your spatial reasoning and avoid the same collision.
+            CRITICAL: You MUST use the safe positions listed above. 
+            Do NOT place the object at the same position as the previous attempt.
+            Pick a concrete safe x or z value from the ranges given.
             """
 
 
