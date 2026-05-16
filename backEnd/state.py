@@ -211,4 +211,79 @@ class ExecutionResult(TypedDict):
     message: str
 
 
+class RemoveTargetSpec(TypedDict, total=False):
+    """
+    Per-target removal specification for delete intent resolution.
+
+    One command may carry multiple independent target specs.
+    Example: "delete the chair and the table" =>
+      - {object_type: "chair", quantity_mode: "exact", quantity: 1, ...}
+      - {object_type: "table", quantity_mode: "exact", quantity: 1, ...}
+    """
+
+    object_type: str
+    """
+    Canonical object category/type phrase to resolve in scene state.
+    Example: "chair", "coffee table", "lamp".
+    """
+
+    quantity_mode: Literal["exact", "all"]
+    """
+    - "exact": remove exactly `quantity` matches for this target spec.
+    - "all": remove all matches for this target spec.
+    """
+
+    quantity: int
+    """
+    Required when quantity_mode is "exact".
+    Intended default (when omitted by parser) is 1.
+    """
+
+    reference_type: Literal["deictic", "definite", "indefinite", "numeric", "all"]
+    """
+    Linguistic reference class inferred from prompt:
+    - deictic: "this/that"
+    - definite: "the"
+    - indefinite: "a/an"
+    - numeric: explicit count ("2 chairs")
+    - all: universal scope for this type ("all chairs")
+    """
+
+    spatial_filter: Optional[Dict[str, Any]]
+    """
+    Optional spatial constraints for this target spec.
+    Example shapes may include relation phrases or structured constraints
+    (near window, left of table, closest to user, etc.).
+    """
+
+    selection_policy: str
+    """
+    Tie-break/selection strategy within this target spec.
+    Default policy is expected to be "nearest_to_user".
+    """
+
+
+class RemoveIntent(TypedDict):
+    """
+    Structured delete intent shared across agents.
+    """
+    
+    global_scope: Literal["none", "all_objects"]
+    """
+    Global remove scope:
+    - "none": resolve from target_specs only.
+    - "all_objects": remove all eligible movable objects.
+    """
+
+    target_specs: List[RemoveTargetSpec]
+    """
+    Independent per-type/per-reference target groups for deletion.
+    """
+
+    original_prompt: str
+    """
+    Original user text for traceability and downstream verification.
+    """
+
+
 

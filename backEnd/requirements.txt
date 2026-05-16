@@ -4,6 +4,7 @@ langchain
 python-multipart==0.0.6
 pydantic==2.5.0
 google-generativeai
+python-dotenv
 fastapi
 uvicorn
 websockets

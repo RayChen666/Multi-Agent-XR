@@ -59,14 +59,22 @@ export function initSttPhase1(opts) {
   }
 
   sttPhase1Attached = true;
-
   const SR = getSpeechRecognitionCtor();
-  if (!SR) {
+  const hasWebSpeech = Boolean(SR);
+  const hasRecorderFallback =
+    typeof navigator !== 'undefined'
+    && navigator.mediaDevices
+    && typeof navigator.mediaDevices.getUserMedia === 'function'
+    && typeof MediaRecorder !== 'undefined';
+
+  if (!hasWebSpeech && !hasRecorderFallback) {
     btn.disabled = true;
-    btn.title = 'Speech recognition not supported in this browser';
-    setStatus('Speech recognition unavailable (use Chromium)', 'error');
+    btn.title = 'Speech recognition is not available in this browser';
+    setStatus('Speech recognition unavailable on this device/browser', 'error');
     return;
   }
+
+  const sttMode = hasWebSpeech ? 'webspeech' : 'audio-upload';
 
   let recognition = null;
   let listeningSession = false;
@@ -74,6 +82,11 @@ export function initSttPhase1(opts) {
   let silenceTimer = null;
   let cleanupInFlight = false;
   let lastCombined = '';
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let recordedChunks = [];
+  let recordMimeType = '';
+  let maxRecordTimer = null;
 
   function clearSilenceTimer() {
     if (silenceTimer !== null) {
@@ -88,6 +101,43 @@ export function initSttPhase1(opts) {
       silenceTimer = null;
       finishListeningAndCleanup('silence');
     }, SILENCE_END_MS);
+  }
+
+  function clearMaxRecordTimer() {
+    if (maxRecordTimer !== null) {
+      clearTimeout(maxRecordTimer);
+      maxRecordTimer = null;
+    }
+  }
+
+  function pickRecorderMimeType() {
+    if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+      return '';
+    }
+    const preferred = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/mp4'
+    ];
+    for (const t of preferred) {
+      if (MediaRecorder.isTypeSupported(t)) return t;
+    }
+    return '';
+  }
+
+  function stopMediaStreamTracks() {
+    if (mediaStream) {
+      for (const track of mediaStream.getTracks()) {
+        try {
+          track.stop();
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      mediaStream = null;
+    }
   }
 
   async function runCleanupPost(raw) {
@@ -138,6 +188,80 @@ export function initSttPhase1(opts) {
     }
   }
 
+  async function runTranscribeAndCleanup(audioBlob) {
+    if (cleanupInFlight) return;
+    
+    cleanupInFlight = true;
+    clearSilenceTimer();
+    clearMaxRecordTimer();
+
+    if (!audioBlob || audioBlob.size === 0) {
+      cleanupInFlight = false;
+      setStatus('No audio captured; try Listen again', 'error');
+      return;
+    }
+
+    setStatus('Uploading audio for transcription…', 'processing');
+    const base = getApiBaseUrl();
+
+    try {
+      const ext = audioBlob.type.includes('ogg') ? 'ogg' : 'webm';
+      const formData = new FormData();
+      formData.append('audio', audioBlob, `voice_input.${ext}`);
+
+      const trRes = await fetch(`${base}/stt/transcribe`, {
+        method: 'POST',
+        body: formData
+      });
+
+      const trData = await trRes.json().catch(() => ({}));
+
+      if (!trRes.ok) {
+        const detail = trData.detail || trData.message || trRes.statusText;
+        setStatus(typeof detail === 'string' ? detail : 'Audio transcription failed', 'error');
+        cleanupInFlight = false;
+        return;
+      }
+
+      const transcript = (trData.transcript || '').trim();
+      if (!transcript) {
+        setStatus('Transcription returned empty text', 'error');
+        cleanupInFlight = false;
+        return;
+      }
+
+      setStatus('Cleaning up transcript…', 'processing');
+      const cleanRes = await fetch(`${base}/stt/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript })
+      });
+      
+      const cleanData = await cleanRes.json().catch(() => ({}));
+      if (!cleanRes.ok) {
+        const detail = cleanData.detail || cleanData.message || cleanRes.statusText;
+        setStatus(typeof detail === 'string' ? detail : 'Cleanup failed', 'error');
+        cleanupInFlight = false;
+        return;
+      }
+
+      const cleaned = (cleanData.cleaned_text || '').trim();
+      if (!cleaned) {
+        setStatus('Cleanup returned empty text', 'error');
+        cleanupInFlight = false;
+        return;
+      }
+
+      input.value = cleaned;
+      setStatus('Edit if needed, then Execute or Clear', 'success');
+    } catch (err) {
+      console.error('STT transcribe/cleanup error:', err);
+      setStatus(`Network error: ${err.message || err}`, 'error');
+    } finally {
+      cleanupInFlight = false;
+    }
+  }
+
   function finishListeningAndCleanup(reason) {
     userEndedSession = true;
     listeningSession = false;
@@ -158,10 +282,111 @@ export function initSttPhase1(opts) {
     }
   }
 
+  async function startRecorderSession() {
+    if (!hasRecorderFallback) {
+      setStatus('Audio recorder fallback not available', 'error');
+      return;
+    }
+
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordMimeType = pickRecorderMimeType();
+
+      mediaRecorder = recordMimeType
+        ? new MediaRecorder(mediaStream, { mimeType: recordMimeType })
+        : new MediaRecorder(mediaStream);
+
+      recordedChunks = [];
+      mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          recordedChunks.push(ev.data);
+        }
+      };
+
+      mediaRecorder.onerror = (ev) => {
+        const errName = ev?.error?.name || 'unknown';
+        console.error('MediaRecorder error:', ev?.error || ev);
+        setStatus(`Recorder error: ${errName}`, 'error');
+        listeningSession = false;
+        setListenButtonState(false);
+        clearMaxRecordTimer();
+        stopMediaStreamTracks();
+      };
+
+      mediaRecorder.onstop = () => {
+        const type = recordMimeType || mediaRecorder?.mimeType || 'audio/webm';
+        const blob = new Blob(recordedChunks, { type });
+        recordedChunks = [];
+        listeningSession = false;
+        setListenButtonState(false);
+        clearMaxRecordTimer();
+        stopMediaStreamTracks();
+        runTranscribeAndCleanup(blob);
+      };
+
+      mediaRecorder.start(250);
+      listeningSession = true;
+      setListenButtonState(true);
+      setStatus('Recording voice… Tap Listen again to stop and transcribe', 'processing');
+
+      clearMaxRecordTimer();
+      maxRecordTimer = setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          try {
+            mediaRecorder.stop();
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      }, 30000);
+    } catch (err) {
+      console.error('getUserMedia / MediaRecorder start failed:', err);
+      const msg = err?.name === 'NotAllowedError'
+        ? 'Microphone permission denied'
+        : (err?.message || 'Could not start microphone');
+      setStatus(msg, 'error');
+      listeningSession = false;
+      setListenButtonState(false);
+      clearMaxRecordTimer();
+      stopMediaStreamTracks();
+    }
+  }
+
+  function stopRecorderSession() {
+    if (!mediaRecorder) {
+      setStatus('Recorder is not active', 'error');
+      return;
+    }
+    if (mediaRecorder.state === 'recording') {
+      try {
+        mediaRecorder.stop();
+      } catch (err) {
+        console.error('mediaRecorder.stop failed:', err);
+        setStatus('Could not stop recording', 'error');
+        listeningSession = false;
+        setListenButtonState(false);
+        clearMaxRecordTimer();
+        stopMediaStreamTracks();
+      }
+    }
+  }
+
   btn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
     if (btn.disabled) return;
+
+    if (sttMode === 'audio-upload') {
+      if (cleanupInFlight) {
+        return;
+      }
+      if (!listeningSession) {
+        startRecorderSession();
+      } else {
+        stopRecorderSession();
+      }
+      return;
+    }
 
     if (listeningSession && recognition) {
       finishListeningAndCleanup('manual');
@@ -233,4 +458,8 @@ export function initSttPhase1(opts) {
       listeningSession = false;
     }
   });
+
+  if (sttMode === 'audio-upload') {
+    setStatus('Server STT fallback ready on this browser', 'processing');
+  }
 }

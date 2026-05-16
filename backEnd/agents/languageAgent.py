@@ -3,6 +3,7 @@ import google.generativeai as genai
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import re
 
 class LanguageAgent:
     def __init__(self):
@@ -46,9 +47,27 @@ class LanguageAgent:
             "action_hints": {
                 "primary_action": "place" | "move" | "rotate" | "add" | "remove" | "arrange",
                 "requires_asset_selection": true | false,
-                "requires_spatial_reasoning": true | false
+                "requires_spatial_reasoning": true | false,
+                "delete_intent": {
+                    "global_scope": "none" | "all_objects",
+                    "target_specs": [
+                        {
+                            "object_type": string,
+                            "quantity_mode": "exact" | "all",
+                            "quantity": number,
+                            "reference_type": "deictic" | "definite" | "indefinite" | "numeric" | "all",
+                            "spatial_filter": object | null,
+                            "selection_policy": "nearest_to_user"
+                        }
+                    ],
+                    "original_prompt": string
+                }
             }
         }
+        
+        IMPORTANT:
+        - action_hints.delete_intent is REQUIRED when primary_action is "remove".
+        - For non-remove actions, omit delete_intent.
         
         CLASSIFICATION RULES:
 
@@ -59,6 +78,14 @@ class LanguageAgent:
         - Removing objects
         ✅ "delete table", "remove the cup", "take away the chair"
         - KEY INDICATORS: "new", "another", "add", "create", "delete", "remove"
+        
+        REMOVE-INTENT RULES (CRITICAL):
+        - Build delete_intent PER TARGET GROUP, not globally.
+        - "delete the chair and the table" => two target_specs (chair x1, table x1).
+        - "delete 2 chairs" => one target_spec with quantity_mode="exact", quantity=2.
+        - "delete all objects" => global_scope="all_objects", target_specs=[].
+        - For "this/that/the/a/an <object>", quantity_mode="exact", quantity=1 for that object type.
+        - Use selection_policy="nearest_to_user" by default for ambiguous instance selection.
 
         "POS/ROTATE":
         - Moving existing objects
@@ -244,7 +271,104 @@ class LanguageAgent:
             "action_hints": {
                 "primary_action": "remove",
                 "requires_asset_selection": false,
-                "requires_spatial_reasoning": false
+                "requires_spatial_reasoning": false,
+                "delete_intent": {
+                    "global_scope": "none",
+                    "target_specs": [
+                        {
+                            "object_type": "coffee table",
+                            "quantity_mode": "exact",
+                            "quantity": 1,
+                            "reference_type": "definite",
+                            "spatial_filter": null,
+                            "selection_policy": "nearest_to_user"
+                        }
+                    ],
+                    "original_prompt": "remove the coffee table"
+                }
+            }
+        }
+
+        Input: "delete the chair and the table"
+        {
+            "original_prompt": "delete the chair and the table",
+            "command_type": "ADD/DELETE",
+            "involved_objects": ["chair", "table"],
+            "spatial_concepts": [],
+            "intent_summary": "Delete one chair and one table",
+            "action_hints": {
+                "primary_action": "remove",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": true,
+                "delete_intent": {
+                    "global_scope": "none",
+                    "target_specs": [
+                        {
+                            "object_type": "chair",
+                            "quantity_mode": "exact",
+                            "quantity": 1,
+                            "reference_type": "definite",
+                            "spatial_filter": null,
+                            "selection_policy": "nearest_to_user"
+                        },
+                        {
+                            "object_type": "table",
+                            "quantity_mode": "exact",
+                            "quantity": 1,
+                            "reference_type": "definite",
+                            "spatial_filter": null,
+                            "selection_policy": "nearest_to_user"
+                        }
+                    ],
+                    "original_prompt": "delete the chair and the table"
+                }
+            }
+        }
+
+        Input: "delete 2 chairs"
+        {
+            "original_prompt": "delete 2 chairs",
+            "command_type": "ADD/DELETE",
+            "involved_objects": ["chair"],
+            "spatial_concepts": [],
+            "intent_summary": "Delete two chairs",
+            "action_hints": {
+                "primary_action": "remove",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": true,
+                "delete_intent": {
+                    "global_scope": "none",
+                    "target_specs": [
+                        {
+                            "object_type": "chair",
+                            "quantity_mode": "exact",
+                            "quantity": 2,
+                            "reference_type": "numeric",
+                            "spatial_filter": null,
+                            "selection_policy": "nearest_to_user"
+                        }
+                    ],
+                    "original_prompt": "delete 2 chairs"
+                }
+            }
+        }
+
+        Input: "delete all objects"
+        {
+            "original_prompt": "delete all objects",
+            "command_type": "ADD/DELETE",
+            "involved_objects": ["all objects"],
+            "spatial_concepts": [],
+            "intent_summary": "Delete all removable objects in the scene",
+            "action_hints": {
+                "primary_action": "remove",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": false,
+                "delete_intent": {
+                    "global_scope": "all_objects",
+                    "target_specs": [],
+                    "original_prompt": "delete all objects"
+                }
             }
         }
 
@@ -377,6 +501,8 @@ class LanguageAgent:
                         'requires_asset_selection': True,
                         'requires_spatial_reasoning': True
                     }
+
+                self._normalize_delete_intent(parsed, prompt)
                 
                 print(f"Language Agent analyzed:")
                 print(f"   Command Type: {parsed['command_type']}")
@@ -404,7 +530,7 @@ class LanguageAgent:
         prompt_lower = prompt.lower()
         
         # Detect primary action
-        if any(word in prompt_lower for word in ['add', 'delete', 'remove', 'take away']):
+        if any(word in prompt_lower for word in ['add', 'delete', 'remove', 'take away', 'get rid of']):
             command_type = 'ADD/DELETE'
             primary_action = 'add' if 'add' in prompt_lower else 'remove'
 
@@ -442,8 +568,7 @@ class LanguageAgent:
         spatial_concepts = [keyword for keyword in spatial_keywords if keyword in prompt_lower]
         
         print(f"Using fallback parser")
-        
-        return {
+        parsed = {
             'original_prompt': prompt, 
             'command_type': command_type,
             'involved_objects': involved_objects,
@@ -454,6 +579,173 @@ class LanguageAgent:
                 'requires_asset_selection': command_type == 'ADD/DELETE',
                 'requires_spatial_reasoning': True
             }
+        }
+        self._normalize_delete_intent(parsed, prompt)
+        return parsed
+
+    def _normalize_delete_intent(self, parsed: dict, prompt: str) -> None:
+        """
+        Ensure remove commands always carry a well-formed action_hints.delete_intent.
+        This keeps downstream delete handling robust even when LLM output is partial.
+        """
+        action_hints = parsed.setdefault('action_hints', {})
+        primary = str(action_hints.get('primary_action', '')).strip().lower()
+        command_type = str(parsed.get('command_type', '')).strip()
+        prompt_lower = (prompt or '').lower()
+
+        # Recover remove action if command_type indicates delete-ish phrasing.
+        if not primary and command_type == 'ADD/DELETE':
+            if any(k in prompt_lower for k in ('delete', 'remove', 'take away', 'get rid of', 'clear')):
+                primary = 'remove'
+                action_hints['primary_action'] = 'remove'
+
+        if primary not in {'remove', 'delete'}:
+            action_hints.pop('delete_intent', None)
+            return
+
+        existing = action_hints.get('delete_intent')
+        if not isinstance(existing, dict):
+            action_hints['delete_intent'] = self._build_delete_intent_fallback(
+                prompt=prompt,
+                involved_objects=parsed.get('involved_objects', []),
+                spatial_concepts=parsed.get('spatial_concepts', []),
+            )
+            return
+
+        global_scope = existing.get('global_scope', 'none')
+        if global_scope not in {'none', 'all_objects'}:
+            global_scope = 'none'
+
+        normalized_specs = []
+        for spec in existing.get('target_specs', []) if isinstance(existing.get('target_specs', []), list) else []:
+            if not isinstance(spec, dict):
+                continue
+            object_type = str(spec.get('object_type', '')).strip()
+            if not object_type:
+                continue
+            quantity_mode = spec.get('quantity_mode', 'exact')
+            if quantity_mode not in {'exact', 'all'}:
+                quantity_mode = 'exact'
+            quantity = spec.get('quantity', 1)
+            try:
+                quantity = int(quantity)
+            except (TypeError, ValueError):
+                quantity = 1
+            quantity = max(1, quantity)
+            reference_type = spec.get('reference_type', 'definite')
+            if reference_type not in {'deictic', 'definite', 'indefinite', 'numeric', 'all'}:
+                reference_type = 'definite'
+
+            normalized_specs.append({
+                'object_type': object_type,
+                'quantity_mode': quantity_mode,
+                'quantity': quantity,
+                'reference_type': reference_type,
+                'spatial_filter': spec.get('spatial_filter'),
+                'selection_policy': spec.get('selection_policy', 'nearest_to_user'),
+            })
+
+        if global_scope == 'all_objects':
+            normalized_specs = []
+        elif not normalized_specs:
+            fallback = self._build_delete_intent_fallback(
+                prompt=prompt,
+                involved_objects=parsed.get('involved_objects', []),
+                spatial_concepts=parsed.get('spatial_concepts', []),
+            )
+            global_scope = fallback['global_scope']
+            normalized_specs = fallback['target_specs']
+
+        action_hints['delete_intent'] = {
+            'global_scope': global_scope,
+            'target_specs': normalized_specs,
+            'original_prompt': prompt,
+        }
+
+    def _build_delete_intent_fallback(
+        self,
+        prompt: str,
+        involved_objects: list,
+        spatial_concepts: list,
+    ) -> dict:
+        """
+        Coarse, deterministic remove-intent builder for fallback/normalization.
+        """
+        text = (prompt or '').lower()
+
+        wipe_phrases = (
+            'all objects',
+            'everything',
+            'clear the scene',
+            'clear everything',
+            'remove everything',
+            'delete everything',
+        )
+        if any(p in text for p in wipe_phrases):
+            return {
+                'global_scope': 'all_objects',
+                'target_specs': [],
+                'original_prompt': prompt,
+            }
+
+        numeric_words = {
+            'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+            'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+        }
+
+        def _singularize(word: str) -> str:
+            w = word.strip().lower()
+            if len(w) > 3 and w.endswith('ies'):
+                return w[:-3] + 'y'
+            if len(w) > 2 and w.endswith('s') and not w.endswith('ss'):
+                return w[:-1]
+            return w
+
+        target_specs = []
+        seen_types = set()
+        objects = involved_objects if isinstance(involved_objects, list) else []
+        for raw_obj in objects:
+            obj = _singularize(str(raw_obj))
+            if not obj or obj in seen_types or obj == 'all object':
+                continue
+            seen_types.add(obj)
+            obj_pat = re.escape(obj)
+
+            quantity_mode = 'exact'
+            quantity = 1
+            reference_type = 'definite'
+
+            if re.search(rf"\ball\s+(?:the\s+)?{obj_pat}s?\b", text):
+                quantity_mode = 'all'
+                reference_type = 'all'
+            else:
+                num_match = re.search(
+                    rf"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+{obj_pat}s?\b",
+                    text,
+                )
+                if num_match:
+                    token = num_match.group(1)
+                    quantity = int(token) if token.isdigit() else numeric_words.get(token, 1)
+                    reference_type = 'numeric'
+                elif re.search(rf"\b(this|that)\s+{obj_pat}\b", text):
+                    reference_type = 'deictic'
+                elif re.search(rf"\b(a|an)\s+{obj_pat}\b", text):
+                    reference_type = 'indefinite'
+
+            target_specs.append({
+                'object_type': obj,
+                'quantity_mode': quantity_mode,
+                'quantity': max(1, quantity),
+                'reference_type': reference_type,
+                'spatial_filter': None,
+                'selection_policy': 'nearest_to_user',
+            })
+
+        # Fallback: if remove wording exists but no object extracted, emit empty local scope.
+        return {
+            'global_scope': 'none',
+            'target_specs': target_specs,
+            'original_prompt': prompt,
         }
 
 

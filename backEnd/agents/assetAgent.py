@@ -407,17 +407,17 @@ class AssetAgent:
             - For REMOVE: {"action": "remove", "remove_intent": {...}, "needs_positioning": False}
               (SceneAgent selects final ids; AssetAgent does not resolve target_object_ids.)
         """
-        action = parsed_command.get("action_hints", {}).get("primary_action", "").lower()
+        action_hints = parsed_command.get("action_hints", {}) or {}
+        action = action_hints.get("primary_action", "").lower()
         involved_objects = parsed_command.get("involved_objects", [])
         
-        if not involved_objects:
-            return {
-                "action": "none",
-                "success": False,
-                "message": "No objects specified"
-            }
-        
         if action == "add":
+            if not involved_objects:
+                return {
+                    "action": "none",
+                    "success": False,
+                    "message": "No objects specified"
+                }
             try:
                 self.pending_objects = []
                 original_prompt = parsed_command.get("original_prompt", "")
@@ -457,19 +457,57 @@ class AssetAgent:
 
         if action in {"remove", "delete"}:
             # Intent only: SceneAgent (LLM + scene) is the final selector of object ids.
-            requested = [str(x).strip() for x in involved_objects if str(x).strip()]
-            if not requested:
-                return {
-                    "action": "remove",
-                    "success": False,
-                    "needs_positioning": False,
-                    "message": "No objects specified",
-                }
-
             original_prompt = (parsed_command.get("original_prompt") or "").strip()
             prompt_lower = original_prompt.lower()
+            parsed_delete_intent = action_hints.get("delete_intent") or {}
+
+            # New contract (authoritative): pass target_specs through unchanged except
+            # for lightweight shape hardening.
+            raw_target_specs = parsed_delete_intent.get("target_specs", [])
+            target_specs = []
+            if isinstance(raw_target_specs, list):
+                for spec in raw_target_specs:
+                    if not isinstance(spec, dict):
+                        continue
+                    object_type = str(spec.get("object_type", "")).strip()
+                    if not object_type:
+                        continue
+
+                    quantity_mode = spec.get("quantity_mode", "exact")
+                    if quantity_mode not in {"exact", "all"}:
+                        quantity_mode = "exact"
+
+                    quantity = spec.get("quantity", 1)
+                    try:
+                        quantity = int(quantity)
+                    except (TypeError, ValueError):
+                        quantity = 1
+                    quantity = max(1, quantity)
+
+                    reference_type = spec.get("reference_type", "definite")
+                    if reference_type not in {"deictic", "definite", "indefinite", "numeric", "all"}:
+                        reference_type = "definite"
+
+                    target_specs.append({
+                        "object_type": object_type,
+                        "quantity_mode": quantity_mode,
+                        "quantity": quantity,
+                        "reference_type": reference_type,
+                        "spatial_filter": spec.get("spatial_filter"),
+                        "selection_policy": spec.get("selection_policy", "nearest_to_user"),
+                    })
+
+            delete_intent_global_scope = parsed_delete_intent.get("global_scope", "none")
+            if delete_intent_global_scope not in {"none", "all_objects"}:
+                delete_intent_global_scope = "none"
+
+            # Compatibility view for older downstream usage.
+            requested = [str(x).strip() for x in involved_objects if str(x).strip()]
+            if not requested and target_specs:
+                requested = [str(spec.get("object_type", "")).strip() for spec in target_specs if str(spec.get("object_type", "")).strip()]
             requested_lower = [x.lower() for x in requested]
 
+            # Legacy scope_hint retained for compatibility; target_specs remains authoritative.
             scope_hint = "contextual"
             wipe_phrases = (
                 "all objects",
@@ -482,10 +520,28 @@ class AssetAgent:
             generic_token = any(
                 x in {"all", "all objects"} or "all objects" in x for x in requested_lower
             )
-            if any(p in prompt_lower for p in wipe_phrases) or generic_token:
+            if delete_intent_global_scope == "all_objects":
                 scope_hint = "all_movable"
+            elif any(p in prompt_lower for p in wipe_phrases) or generic_token:
+                scope_hint = "all_movable"
+            elif any(spec.get("quantity_mode") == "all" for spec in target_specs):
+                scope_hint = "all_matching_type"
             elif re.search(r"\ball\b", prompt_lower) and requested:
                 scope_hint = "all_matching_type"
+
+            # Guardrail: if neither global scope nor target specs nor requested objects
+            # provide remove targets, return an actionable failure.
+            if (
+                delete_intent_global_scope != "all_objects"
+                and not target_specs
+                and not requested
+            ):
+                return {
+                    "action": "remove",
+                    "success": False,
+                    "needs_positioning": False,
+                    "message": "No objects specified",
+                }
 
             remove_intent = {
                 "involved_objects": requested,
@@ -493,6 +549,14 @@ class AssetAgent:
                 "spatial_concepts": parsed_command.get("spatial_concepts") or [],
                 "intent_summary": parsed_command.get("intent_summary"),
                 "scope_hint": scope_hint,
+                # New structured contract for per-target delete semantics.
+                "global_scope": delete_intent_global_scope,
+                "target_specs": target_specs,
+                "delete_intent": {
+                    "global_scope": delete_intent_global_scope,
+                    "target_specs": target_specs,
+                    "original_prompt": original_prompt,
+                },
             }
 
             return {

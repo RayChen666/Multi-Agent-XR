@@ -52,6 +52,7 @@ class Orchestrator:
 
         # This stores the conversation history of the current session
         self.conversation_history = {}
+        self.last_result_state: Dict[str, Any] = {}
 
         
         # Default user position if not provided
@@ -149,8 +150,6 @@ class Orchestrator:
         max_iterations = state.get("max_iteration", 3)
         
         if not has_collision:
-            #### Temporarily disable this check since we still need to do with verification development
-            '''
             if verification.get("valid") is False:
                 print("Verification failed — stopping before execution")
                 if not state.get("error_message"):
@@ -159,7 +158,6 @@ class Orchestrator:
                     )
                 state["success"] = False
                 return "end"
-            '''
             print("Verification passed - proceeding to execution")
             
             return "execution_agent"
@@ -288,33 +286,6 @@ class Orchestrator:
                 return state
 
             object_ids = list(result.get("target_object_ids", []))
-            removal_policy = {
-                "scope_hint": (ri or {}).get("scope_hint", "contextual"),
-                "original_prompt": (parsed_command or {}).get("original_prompt", ""),
-                "involved_objects": (parsed_command or {}).get("involved_objects", []),
-            }
-            if (
-                self.verification_agent.infer_removal_multiplicity(removal_policy)
-                == "single"
-                and len(object_ids) > 1
-            ):
-                before_n = len(object_ids)
-                object_ids = self.verification_agent.narrow_removal_ids_to_closest(
-                    object_ids,
-                    scene_state,
-                    self.user_position,
-                )
-                print(
-                    f"   Singular intent: narrowed {before_n} candidate(s) → 1 "
-                    f"(closest to user: {object_ids[0]})"
-                )
-                base_reason = result.get("reasoning") or ""
-                result = {
-                    **result,
-                    "reasoning": (
-                        f"{base_reason} [Narrowed to single target nearest user: {object_ids[0]}]"
-                    ).strip(),
-                }
 
             state["proposed_placement"] = {
                 "action": "remove",
@@ -513,16 +484,26 @@ class Orchestrator:
             parsed = state.get("parsed_command") or {}
             selected = state.get("selected_assets") or {}
             remove_intent = selected.get("remove_intent") or {}
-            removal_policy = {
-                "scope_hint": remove_intent.get("scope_hint", "contextual"),
+            delete_intent = remove_intent.get("delete_intent") or {}
+            remove_intent_contract = {
+                "global_scope": remove_intent.get(
+                    "global_scope",
+                    delete_intent.get("global_scope", "none"),
+                ),
+                "target_specs": remove_intent.get(
+                    "target_specs",
+                    delete_intent.get("target_specs", []),
+                ),
                 "original_prompt": parsed.get("original_prompt", ""),
-                "involved_objects": parsed.get("involved_objects", []),
-                "enforce_movable_only": True,
-                "allow_structural": False,
             }
-            state["verification_result"] = self.verification_agent.validate_removal(
-                object_ids,
-                removal_policy,
+
+            state["verification_result"] = self.verification_agent.validate_removal_against_specs(
+                target_object_ids=object_ids,
+                remove_intent=remove_intent_contract,
+                scene_state=state.get("scene_state", {}),
+                user_position=self.user_position,
+                enforce_movable_only=True,
+                allow_structural=False,
             )
             state["collision_info"] = None
             return state
@@ -638,6 +619,8 @@ class Orchestrator:
                     failed_ids.append(object_id)
 
             if object_ids and len(failed_ids) == 0:
+                selected = state.get("selected_assets") or {}
+                remove_intent = selected.get("remove_intent") or {}
                 state["success"] = True
                 state["final_actions"] = [{
                     "success": True,
@@ -645,6 +628,11 @@ class Orchestrator:
                     "action": "remove",
                     "message": f"Removed {len(removed_ids)} object(s)",
                     "removed": removed_entries,
+                    "debug": {
+                        "resolved_object_ids": removed_ids,
+                        "resolved_target_specs": remove_intent.get("target_specs", []),
+                        "global_scope": remove_intent.get("global_scope", "none"),
+                    },
                 }]
             else:
                 state["success"] = False
@@ -857,10 +845,15 @@ class Orchestrator:
         # Run the workflow
         try:
             final_state = self.app.invoke(initial_state)
+            self.last_result_state = final_state if isinstance(final_state, dict) else {}
             return final_state.get("success", False)
         
         except Exception as e:
             print(f"\nWorkflow error: {e}")
+            self.last_result_state = {
+                "success": False,
+                "error_message": str(e),
+            }
             return False
 
 

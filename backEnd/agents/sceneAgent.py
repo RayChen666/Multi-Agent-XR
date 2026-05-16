@@ -215,108 +215,100 @@ class SceneAgent:
         scene_state: Dict,
         user_position: Dict,
         feedback: Optional[Dict] = None, ) -> Optional[Dict]:
-        scene_objects = [
-            {
-                "id": obj["id"],
-                "name": obj["name"],
-                "position": obj["position"],
-                "rotation": obj["rotation"],
-                "category": obj.get("category", "unknown"),
-                "movable": obj.get("properties", {}).get("movable", False),
-            }
-            for obj in scene_state.get("objects", [])
-        ]
 
+        scene_objects = self._build_scene_objects_index(scene_state)
+        remove_intent = self._extract_remove_intent(parsed_command)
+        target_specs = remove_intent.get("target_specs", [])
+        global_scope = remove_intent.get("global_scope", "none")
         original_prompt = parsed_command.get("original_prompt", "")
-        involved = parsed_command.get("involved_objects", [])
-        spatial_concepts = parsed_command.get("spatial_concepts", [])
-        intent_summary = parsed_command.get("intent_summary", original_prompt)
-        action_hints = parsed_command.get("action_hints", {})
-        remove_intent = parsed_command.get("remove_intent") or {}
-        remove_intent_json = json.dumps(remove_intent, indent=2) if remove_intent else "{}"
 
-        feedback_context = ""
-        if feedback:
-            feedback_context = f"""
-            FEEDBACK FROM PREVIOUS ATTEMPT:
-            {json.dumps(feedback, indent=2)}
-            Adjust your selection accordingly.
-            """
+        if global_scope == "all_objects":
+            all_ids = [
+                obj["id"] for obj in scene_objects
+                if obj.get("movable", False)
+            ]
 
-        prompt = f"""You are an expert spatial reasoning AI for a 3D virtual environment.
-        Your task is to decide WHICH existing object(s) the user wants REMOVED (not moved).
+            return {
+                "action": "remove",
+                "target_object_ids": all_ids,
+                "reasoning": "Global scope all_objects: selected all movable objects",
+            }
 
-        USER REQUEST (verbatim):
-        "{original_prompt}"
-
-        PARSED CONTEXT:
-        - Intent summary: {intent_summary}
-        - Involved object names (hints): {involved}
-        - Spatial concepts: {spatial_concepts}
-        - Primary action hint: {action_hints.get('primary_action', 'remove')}
-        - Asset remove_intent (non-authoritative hints; you still output final ids from the scene list):
-        {remove_intent_json}
-        Use scope_hint when ambiguous: "all_movable" → all movable objects; "all_matching_type" → all
-        scene objects matching the involved type/name; "contextual" → use singular/plural and spatial phrasing in the user text.
-
-        USER POSITION & FACING (Y rotation in radians):
-        Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
-        Facing (Y): {user_position.get('rotation', dict()).get('y', 0):.2f}
-
-        SCENE OBJECTS (use EXACT "id" strings from this list only):
-        {json.dumps(scene_objects, indent=2)}
-
-        RULES:
-        1. Output ONLY JSON, no markdown or extra text.
-        2. "target_object_ids" must be a list of ids copied exactly from the scene list.
-        3. Prefer objects with movable=true; do not remove structural/floor/wall unless the user clearly demands it.
-        4. CRITICAL — Singular / ambiguous phrasing ("the chair", "Remove the Chair", "that lamp", "delete chair")
-        when several instances match: return EXACTLY ONE id. Prefer: (a) any spatial cue in the text;
-        else (b) the movable instance CLOSEST to the user's position (see coordinates above).
-        NEVER expand ambiguous singular into "remove every matching object".
-        5. "all chairs" / explicit plural / "both" / counts → all matching that type/name in the scene.
-        6. "all objects" / "everything" → all movable objects only.
-        7. Use spatial language (left/right of table, near window, etc.) with the coordinate system:
-        - X: left (-) to right (+)
-        - Y: down (-) to up (+), floor often near y=-1
-        - Z: forward (-) to backward (+); user often faces -Z
-        8. "left/right/forward" are relative to the USER's facing direction unless tied to another object.
-        {feedback_context}
-
-        OUTPUT JSON SHAPE (exact shape required):
-        {{
-        "action": "remove",
-        "target_object_ids": ["id_1", "id_2"],
-        "reasoning": "short explanation"
-        }}
-        """
-
-        try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.2,
-                    max_output_tokens=1024,
-                    response_mime_type="application/json",
-                ),
-            )
-            result = json.loads(response.text)
-            if not self._validate_removal_response(result, scene_state):
-                print("LLM removal output validation failed, using fallback")
+        if not target_specs:
+            target_specs = self._build_fallback_target_specs(parsed_command)
+            if not target_specs:
                 return self._fallback_removal_calculation(parsed_command, scene_state)
 
-            print(f"   Removal resolution: {len(result.get('target_object_ids', []))} id(s)")
-            if result.get("reasoning"):
-                print(f"Removal Reasoning: {result['reasoning']}")
-            return result
-        except json.JSONDecodeError as e:
-            print(f"LLM removal JSON error: {e}")
-            return self._fallback_removal_calculation(parsed_command, scene_state)
-        except Exception as e:
-            print(f"LLM removal error: {e}")
+        selected_ids: List[str] = []
+        selected_set = set()
+        reasoning_parts: List[str] = []
+
+        for spec in target_specs:
+            # 1) Candidate pool for this object type.
+            candidates = self._match_candidates_for_spec(scene_objects, spec)
+
+            if not candidates:
+                target_label = spec.get("object_type", "unknown")
+                reasoning_parts.append(f"{target_label}: no candidates")
+                continue
+
+            # 2) LLM-first proposal by spatial semantics / language cues.
+            llm_result = self._llm_candidate_ids_for_spec(
+                spec=spec,
+                candidates=candidates,
+                parsed_command=parsed_command,
+                remove_intent=remove_intent,
+                user_position=user_position,
+                feedback=feedback,
+                already_selected=list(selected_set),
+            )
+
+            # 3) Deterministic policy enforces validity/quota/dedupe and fills gaps only.
+            picked, policy_meta = self._apply_hybrid_selection_for_spec(
+                candidates=candidates,
+                spec=spec,
+                user_position=user_position,
+                already_selected=selected_set,
+                llm_candidate_ids=llm_result.get("candidate_ids", []),
+                llm_confidence=llm_result.get("confidence"),
+            )
+
+            for oid in picked:
+                if oid not in selected_set:
+                    selected_set.add(oid)
+                    selected_ids.append(oid)
+
+            target_label = spec.get("object_type", "unknown")
+            requested = (
+                "all" if spec.get("quantity_mode") == "all"
+                else str(max(1, int(spec.get("quantity", 1))))
+            )
+
+            llm_conf = llm_result.get("confidence")
+            llm_conf_text = (
+                f"{float(llm_conf):.2f}" if isinstance(llm_conf, (int, float)) else "n/a"
+            )
+
+            llm_reason = (llm_result.get("reasoning") or "").strip()
+            reasoning_parts.append(
+                f"{target_label}: requested {requested}, selected {len(picked)}, "
+                f"llm_conf={llm_conf_text}, policy={policy_meta}"
+            )
+
+            if llm_reason:
+                reasoning_parts.append(f"{target_label} llm: {llm_reason}")
+
+        if not selected_ids:
             return self._fallback_removal_calculation(parsed_command, scene_state)
 
+        return {
+            "action": "remove",
+            "target_object_ids": selected_ids,
+            "reasoning": " | ".join(reasoning_parts) or f"Resolved remove targets for '{original_prompt}'",
+        }
+
     def _validate_removal_response(self, result: Dict, scene_state: Dict) -> bool:
+
         if not result or result.get("action") != "remove":
             return False
         
@@ -326,36 +318,404 @@ class SceneAgent:
             return False
         
         valid_ids = {obj["id"] for obj in scene_state.get("objects", [])}
+
         for oid in ids:
             if not isinstance(oid, str) or oid not in valid_ids:
                 return False
+
         return True
 
     def _fallback_removal_calculation(
             self, parsed_command: Dict, 
             scene_state: Dict ) -> Optional[Dict]:
-        """Name-based fallback: first substring name match per involved token (weak)."""
-        involved = parsed_command.get("involved_objects", [])
-        if not involved:
+        """Deterministic fallback with per-spec quotas."""
+        scene_objects = self._build_scene_objects_index(scene_state)
+        remove_intent = self._extract_remove_intent(parsed_command)
+        target_specs = remove_intent.get("target_specs", [])
+        global_scope = remove_intent.get("global_scope", "none")
+
+        if global_scope == "all_objects":
+            all_ids = [
+                obj["id"] for obj in scene_objects
+                if obj.get("movable", False)
+            ]
+            
+            return {
+                "action": "remove",
+                "target_object_ids": all_ids,
+                "reasoning": "Fallback: global all_objects",
+            }
+
+        if not target_specs:
+            target_specs = self._build_fallback_target_specs(parsed_command)
+
+        if not target_specs:
             return None
-        matched: List[str] = []
-        seen = set()
-        for name_hint in involved:
-            hint = str(name_hint).lower()
-            for obj in scene_state.get("objects", []):
-                if hint in obj.get("name", "").lower():
-                    oid = obj["id"]
-                    if oid not in seen:
-                        seen.add(oid)
-                        matched.append(oid)
-        if not matched:
-            print(f"   Fallback removal: no match for {involved}")
+
+        user_position = {
+            "x": 0, "y": 0, "z": 0,
+            "rotation": {"x": 0, "y": 0, "z": 0},
+        }
+
+        selected_ids: List[str] = []
+        selected_set = set()
+
+        for spec in target_specs:
+            candidates = self._match_candidates_for_spec(scene_objects, spec)
+            picked = self._deterministic_select_for_spec(
+                candidates=candidates,
+                spec=spec,
+                user_position=user_position,
+                already_selected=selected_set,
+            )
+
+            for oid in picked:
+                if oid not in selected_set:
+                    selected_set.add(oid)
+                    selected_ids.append(oid)
+
+        if not selected_ids:
+            print(f"   Fallback removal: no match for specs {target_specs}")
             return None
+
         return {
             "action": "remove",
-            "target_object_ids": matched,
-            "reasoning": "Fallback: substring name match on involved_objects",
+            "target_object_ids": selected_ids,
+            "reasoning": "Fallback: per-spec deterministic selection",
         }
+
+    def _build_scene_objects_index(self, scene_state: Dict) -> List[Dict]:
+
+        out: List[Dict] = []
+
+        for obj in scene_state.get("objects", []):
+            out.append({
+                "id": obj.get("id"),
+                "name": obj.get("name", ""),
+                "position": obj.get("position", {}),
+                "rotation": obj.get("rotation", {}),
+                "category": obj.get("category", "unknown"),
+                "movable": obj.get("properties", {}).get("movable", False),
+                "raw": obj,
+            })
+
+        return [o for o in out if o.get("id")]
+
+    def _extract_remove_intent(self, parsed_command: Dict) -> Dict:
+
+        remove_intent = parsed_command.get("remove_intent") or {}
+        nested = remove_intent.get("delete_intent")
+
+        if isinstance(nested, dict):
+            source = nested
+        else:
+            action_hints = parsed_command.get("action_hints", {}) or {}
+            source = action_hints.get("delete_intent", {}) or {}
+
+        if not isinstance(source, dict):
+            source = {}
+
+        global_scope = source.get("global_scope", remove_intent.get("global_scope", "none"))
+
+        if global_scope not in {"none", "all_objects"}:
+            global_scope = "none"
+
+        raw_specs = source.get("target_specs", remove_intent.get("target_specs", []))
+        target_specs: List[Dict] = []
+
+        if isinstance(raw_specs, list):
+            for spec in raw_specs:
+                if not isinstance(spec, dict):
+                    continue
+
+                obj_type = str(spec.get("object_type", "")).strip()
+                
+                if not obj_type:
+                    continue
+
+                quantity_mode = spec.get("quantity_mode", "exact")
+
+                if quantity_mode not in {"exact", "all"}:
+                    quantity_mode = "exact"
+                quantity = spec.get("quantity", 1)
+
+                try:
+                    quantity = int(quantity)
+                except (TypeError, ValueError):
+                    quantity = 1
+
+                quantity = max(1, quantity)
+
+                target_specs.append({
+                    "object_type": obj_type,
+                    "quantity_mode": quantity_mode,
+                    "quantity": quantity,
+                    "reference_type": spec.get("reference_type", "definite"),
+                    "spatial_filter": spec.get("spatial_filter"),
+                    "selection_policy": spec.get("selection_policy", "nearest_to_user"),
+                })
+
+        return {
+            "global_scope": global_scope,
+            "target_specs": target_specs,
+            "original_prompt": parsed_command.get("original_prompt", ""),
+        }
+
+    def _build_fallback_target_specs(self, parsed_command: Dict) -> List[Dict]:
+
+        involved = parsed_command.get("involved_objects", []) or []
+        specs: List[Dict] = []
+        seen = set()
+
+        for token in involved:
+            obj_type = str(token).strip().lower()
+            if not obj_type:
+                continue
+
+            if obj_type.endswith("s") and not obj_type.endswith("ss") and len(obj_type) > 2:
+                obj_type = obj_type[:-1]
+
+            if obj_type in seen:
+                continue
+
+            seen.add(obj_type)
+
+            specs.append({
+                "object_type": obj_type,
+                "quantity_mode": "exact",
+                "quantity": 1,
+                "reference_type": "definite",
+                "spatial_filter": None,
+                "selection_policy": "nearest_to_user",
+            })
+
+        return specs
+
+    def _match_candidates_for_spec(self, scene_objects: List[Dict], spec: Dict) -> List[Dict]:
+
+        obj_type = str(spec.get("object_type", "")).strip().lower()
+
+        if not obj_type:
+            return []
+
+        if obj_type.endswith("s") and not obj_type.endswith("ss") and len(obj_type) > 2:
+            obj_type = obj_type[:-1]
+
+        matches = []
+        for obj in scene_objects:
+            name = str(obj.get("name", "")).lower()
+            category = str(obj.get("category", "")).lower()
+            if obj_type in name or obj_type == category:
+                matches.append(obj)
+
+        return matches
+
+    def _distance_sq(self, obj: Dict, user_position: Dict) -> float:
+        """
+        Calculate squared distance between object and user position.
+        """
+        pos = obj.get("position", {})
+        ux = float(user_position.get("x", 0))
+        uy = float(user_position.get("y", 0))
+        uz = float(user_position.get("z", 0))
+        ox = float(pos.get("x", 0))
+        oy = float(pos.get("y", 0))
+        oz = float(pos.get("z", 0))
+        return (ox - ux) ** 2 + (oy - uy) ** 2 + (oz - uz) ** 2
+
+    def _deterministic_select_for_spec(
+        self,
+        candidates: List[Dict],
+        spec: Dict,
+        user_position: Dict,
+        already_selected: set,
+    ) -> List[str]:
+        """
+        Deterministic selection for a given spec.
+        """
+        if not candidates:
+            return []
+
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda o: (self._distance_sq(o, user_position), str(o.get("id"))),
+        )
+        available = [o for o in sorted_candidates if o["id"] not in already_selected]
+
+        quantity_mode = spec.get("quantity_mode", "exact")
+        if quantity_mode == "all":
+            return [o["id"] for o in available]
+
+        quantity = max(1, int(spec.get("quantity", 1)))
+        return [o["id"] for o in available[:quantity]]
+
+    def _apply_hybrid_selection_for_spec(
+        self,
+        candidates: List[Dict],
+        spec: Dict,
+        user_position: Dict,
+        already_selected: set,
+        llm_candidate_ids: List[str],
+        llm_confidence: Optional[float],
+    ) -> Tuple[List[str], str]:
+
+        """
+        LLM+deterministic hybrid selector:
+        - LLM proposes ranked IDs.
+        - Deterministic layer enforces id validity, dedupe, per-spec quota.
+        - If underfilled, deterministic nearest fill completes the quota.
+        """
+
+        if not candidates:
+            return [], "no_candidates"
+
+        valid_candidates = {obj["id"] for obj in candidates}
+        available_sorted = self._deterministic_select_for_spec(
+            candidates=candidates,
+            spec={"quantity_mode": "all", "quantity": 999999},
+            user_position=user_position,
+            already_selected=already_selected,
+        )
+
+        llm_ranked = []
+        seen = set()
+
+        for oid in llm_candidate_ids or []:
+            if (
+                isinstance(oid, str)
+                and oid in valid_candidates
+                and oid not in already_selected
+                and oid not in seen
+            ):
+                seen.add(oid)
+                llm_ranked.append(oid)
+
+        quantity_mode = spec.get("quantity_mode", "exact")
+
+        if quantity_mode == "all":
+            # For "all", if LLM proposes a non-empty subset (e.g., implicit spatial constraint),
+            # honor it. If LLM returns nothing, deterministic policy selects all available.
+            if llm_ranked:
+                return llm_ranked, "llm_all_subset"
+            return available_sorted, "deterministic_all"
+
+        quantity = max(1, int(spec.get("quantity", 1)))
+        selected = llm_ranked[:quantity]
+
+        # Fill any shortfall deterministically by nearest remaining candidates.
+        if len(selected) < quantity:
+            for oid in available_sorted:
+                if oid in selected:
+                    continue
+
+                selected.append(oid)
+                if len(selected) >= quantity:
+                    break
+
+        conf = (
+            float(llm_confidence)
+            if isinstance(llm_confidence, (int, float))
+            else None
+        )
+        
+        used_llm = len(llm_ranked[:quantity])
+
+        if used_llm == 0:
+            mode = "deterministic_only"
+        elif len(selected) > used_llm:
+            mode = "llm_plus_fill"
+        else:
+            mode = "llm_only"
+
+        if conf is not None:
+            mode = f"{mode}@{conf:.2f}"
+        return selected, mode
+
+    def _llm_candidate_ids_for_spec(
+        self,
+        spec: Dict,
+        candidates: List[Dict],
+        parsed_command: Dict,
+        remove_intent: Dict,
+        user_position: Dict,
+        feedback: Optional[Dict] = None,
+        already_selected: Optional[List[str]] = None,
+    ) -> Dict:
+        
+        if not candidates:
+            return {"candidate_ids": [], "confidence": None, "reasoning": ""}
+
+        feedback_context = ""
+        if feedback:
+            feedback_context = f"\nFEEDBACK: {json.dumps(feedback, indent=2)}\n"
+
+        quantity_mode = spec.get("quantity_mode", "exact")
+        quantity = max(1, int(spec.get("quantity", 1)))
+        already_selected = already_selected or []
+
+        prompt = f"""You are selecting candidate object IDs for ONE delete target group.
+Return JSON only with this shape:
+{{
+  "candidate_ids": ["id1", "id2"],
+  "confidence": 0.0,
+  "reasoning": "one short sentence"
+}}
+
+USER REQUEST:
+"{parsed_command.get('original_prompt', '')}"
+
+TARGET SPEC:
+{json.dumps(spec, indent=2)}
+
+REMOVE INTENT:
+{json.dumps(remove_intent, indent=2)}
+
+USER POSITION:
+{json.dumps(user_position, indent=2)}
+
+ALREADY SELECTED IDS FOR OTHER TARGET GROUPS:
+{json.dumps(already_selected, indent=2)}
+
+AVAILABLE CANDIDATES (ONLY pick ids from this list):
+{json.dumps(candidates, indent=2)}
+{feedback_context}
+
+Rules:
+- Return only ids from AVAILABLE CANDIDATES.
+- Rank candidate_ids from most likely to least likely for THIS target spec.
+- If quantity_mode is "exact", prefer returning at least {quantity} candidates when possible.
+- If quantity_mode is "all", return all ids that match this target spec.
+- Avoid IDs in ALREADY SELECTED IDS unless truly necessary.
+- confidence is 0..1 confidence in your ranked list.
+- Keep reasoning short.
+"""
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=512,
+                    response_mime_type="application/json",
+                ),
+            )
+            payload = json.loads(response.text)
+            ids = payload.get("candidate_ids", [])
+            if not isinstance(ids, list):
+                ids = []
+            valid = {o["id"] for o in candidates}
+            cleaned = [oid for oid in ids if isinstance(oid, str) and oid in valid]
+            confidence = payload.get("confidence")
+            if isinstance(confidence, (int, float)):
+                confidence = max(0.0, min(1.0, float(confidence)))
+            else:
+                confidence = None
+            return {
+                "candidate_ids": cleaned,
+                "confidence": confidence,
+                "reasoning": str(payload.get("reasoning", "")).strip(),
+            }
+        except Exception:
+            return {"candidate_ids": [], "confidence": None, "reasoning": ""}
 
     
     def _llm_spatial_reasoning(self,

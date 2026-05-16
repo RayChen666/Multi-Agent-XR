@@ -207,9 +207,24 @@ async def process_natural_language_command(request: CommandRequest):
                 "message": "Command executed successfully"
             }
         else:
+            last_state = getattr(orchestration_agent, "last_result_state", {}) or {}
+            verification = last_state.get("verification_result", {}) if isinstance(last_state, dict) else {}
+            error_message = (
+                last_state.get("error_message")
+                if isinstance(last_state, dict)
+                else None
+            ) or verification.get("message")
+
+            if verification.get("clarification_required"):
+                raise HTTPException(
+                    status_code=422,
+                    detail=error_message
+                    or "Need clarification to resolve remove intent. Please be more specific.",
+                )
+
             raise HTTPException(
                 status_code=400, 
-                detail="Failed to execute command"
+                detail=error_message or "Failed to execute command"
             )
         
     except HTTPException:

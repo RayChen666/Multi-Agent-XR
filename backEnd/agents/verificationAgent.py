@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import sys
 from pathlib import Path
 import google.generativeai as genai
@@ -331,6 +331,30 @@ class VerificationAgent:
         """
         policy = policy or {}
 
+        # Step 5 path: when per-target specs exist, enforce cardinality per spec instead
+        # of legacy global single/multiple inference.
+        remove_intent = (
+            policy.get("remove_intent")
+            or policy.get("delete_intent")
+            or {
+                "global_scope": policy.get("global_scope", "none"),
+                "target_specs": policy.get("target_specs", []),
+                "original_prompt": policy.get("original_prompt", ""),
+            }
+        )
+        if isinstance(remove_intent, dict) and (
+            remove_intent.get("global_scope") == "all_objects"
+            or (remove_intent.get("target_specs") and isinstance(remove_intent.get("target_specs"), list))
+        ):
+            return self.validate_removal_against_specs(
+                target_object_ids=target_object_ids,
+                remove_intent=remove_intent,
+                scene_state=self.database.scene_data,
+                user_position=None,
+                enforce_movable_only=policy.get("enforce_movable_only", True),
+                allow_structural=policy.get("allow_structural", False),
+            )
+
         raw = [str(x).strip() for x in (target_object_ids or []) if str(x).strip()]
         ids = list(dict.fromkeys(raw))
 
@@ -387,6 +411,339 @@ class VerificationAgent:
             "message": "Verification passed",
             "has_collision": False,
         }
+
+    def validate_removal_against_specs(
+        self,
+        target_object_ids: List[str],
+        remove_intent: Dict[str, Any],
+        scene_state: Dict[str, Any],
+        user_position: Optional[Dict[str, Any]],
+        enforce_movable_only: bool = True,
+        allow_structural: bool = False,
+    ) -> Dict[str, Any]:
+
+        """
+        Per-target remove verification contract.
+
+        Checks:
+        1) Selected ids exist and pass movable/protected policy.
+        2) Per target_spec cardinality is satisfied.
+        3) Global all_objects scope is respected when requested.
+        """
+
+        raw_ids = [str(x).strip() for x in (target_object_ids or []) if str(x).strip()]
+        ids = list(dict.fromkeys(raw_ids))
+        if not ids:
+            return {
+                "valid": False,
+                "message": "No objects selected for removal",
+                "has_collision": False,
+                "clarification_required": True,
+            }
+
+        remove_intent = remove_intent if isinstance(remove_intent, dict) else {}
+        global_scope = str(remove_intent.get("global_scope", "none")).strip().lower()
+        if global_scope not in {"none", "all_objects"}:
+            global_scope = "none"
+
+        raw_specs = remove_intent.get("target_specs", [])
+        target_specs = raw_specs if isinstance(raw_specs, list) else []
+
+        objects = scene_state.get("objects", []) if isinstance(scene_state, dict) else []
+        by_id = {o.get("id"): o for o in objects if isinstance(o, dict) and o.get("id")}
+
+        missing: List[str] = []
+        blocked: List[str] = []
+        for oid in ids:
+            obj = by_id.get(oid) or self.database.get_object_by_id(oid)
+            if not obj:
+                missing.append(oid)
+                continue
+            if enforce_movable_only:
+                ok, reason = self._object_allowed_for_removal(obj, allow_structural)
+                if not ok:
+                    blocked.append(f"{oid} ({reason})")
+
+        if missing:
+            return {
+                "valid": False,
+                "message": f"Objects not found: {', '.join(missing)}",
+                "has_collision": False,
+                "clarification_required": False,
+            }
+
+        if blocked:
+            return {
+                "valid": False,
+                "message": f"Cannot remove protected objects: {', '.join(blocked)}",
+                "has_collision": False,
+                "clarification_required": False,
+            }
+
+        # Global "all objects" contract.
+        if global_scope == "all_objects":
+            eligible_ids = []
+            for obj in objects:
+                if not isinstance(obj, dict) or not obj.get("id"):
+                    continue
+                if not enforce_movable_only:
+                    eligible_ids.append(obj["id"])
+                    continue
+                ok, _ = self._object_allowed_for_removal(obj, allow_structural)
+                if ok:
+                    eligible_ids.append(obj["id"])
+
+            selected_set = set(ids)
+            missing_eligible = [oid for oid in eligible_ids if oid not in selected_set]
+            if missing_eligible:
+                return {
+                    "valid": False,
+                    "message": (
+                        "Global all_objects intent underfilled; missing "
+                        f"{len(missing_eligible)} eligible object(s)"
+                    ),
+                    "has_collision": False,
+                    "clarification_required": False,
+                }
+            return {
+                "valid": True,
+                "message": "Verification passed",
+                "has_collision": False,
+            }
+
+        # Per-spec cardinality contract.
+        normalized_specs = self._normalize_target_specs(target_specs)
+        if not normalized_specs:
+            # No structured spec: keep compatible behavior with a successful existence/safety check.
+            return {
+                "valid": True,
+                "message": "Verification passed",
+                "has_collision": False,
+            }
+
+        selected_by_id: Dict[str, Dict[str, Any]] = {}
+        for oid in ids:
+            obj = by_id.get(oid) or self.database.get_object_by_id(oid)
+            if isinstance(obj, dict):
+                selected_by_id[oid] = obj
+        unassigned_ids = set(selected_by_id.keys())
+
+        for spec in normalized_specs:
+            spec_type = spec["object_type"]
+            quantity_mode = spec["quantity_mode"]
+            quantity = spec["quantity"]
+
+            eligible_of_type = []
+            for obj in objects:
+                if not isinstance(obj, dict):
+                    continue
+                if not self._object_matches_spec(obj, spec, user_position):
+                    continue
+                if enforce_movable_only:
+                    ok, _ = self._object_allowed_for_removal(obj, allow_structural)
+                    if not ok:
+                        continue
+                eligible_of_type.append(obj)
+
+            if len(eligible_of_type) == 0:
+                return {
+                    "valid": False,
+                    "message": (
+                        f"No removable candidates found for '{spec_type}'. "
+                        "Try a different object reference."
+                    ),
+                    "has_collision": False,
+                    "clarification_required": True,
+                }
+
+            selected_matches = []
+            for oid in list(unassigned_ids):
+                obj = selected_by_id.get(oid)
+                if not obj:
+                    continue
+                if self._object_matches_spec(obj, spec, user_position):
+                    selected_matches.append({"id": oid, "obj": obj})
+
+            # Deterministic ordering keeps assignments stable across runs.
+            selected_matches.sort(
+                key=lambda entry: (
+                    self._distance_sq_to_user(entry["obj"], user_position),
+                    str(entry["id"]),
+                )
+            )
+
+            if quantity_mode == "exact":
+                if len(selected_matches) < quantity:
+                    return {
+                        "valid": False,
+                        "message": (
+                            f"Spec underfilled for '{spec_type}': required {quantity}, "
+                            f"selected {len(selected_matches)}"
+                        ),
+                        "has_collision": False,
+                        "clarification_required": True,
+                    }
+                # Consume only the amount required for this spec; any remaining
+                # selected ids may satisfy later specs.
+                assigned_ids = [entry["id"] for entry in selected_matches[:quantity]]
+                for oid in assigned_ids:
+                    unassigned_ids.discard(oid)
+            else:
+                # "all" means all eligible objects of that type should be selected.
+                if len(selected_matches) < len(eligible_of_type):
+                    return {
+                        "valid": False,
+                        "message": (
+                            f"Spec underfilled for all '{spec_type}': selected {len(selected_matches)} "
+                            f"of {len(eligible_of_type)} eligible object(s)"
+                        ),
+                        "has_collision": False,
+                        "clarification_required": True,
+                    }
+                for entry in selected_matches:
+                    unassigned_ids.discard(entry["id"])
+
+        if unassigned_ids:
+            extras = ", ".join(sorted(unassigned_ids))
+            return {
+                "valid": False,
+                "message": (
+                    "Selected remove targets include extra id(s) that do not map "
+                    f"to any target spec: {extras}"
+                ),
+                "has_collision": False,
+                "clarification_required": False,
+            }
+
+        return {
+            "valid": True,
+            "message": "Verification passed",
+            "has_collision": False,
+        }
+
+    def _normalize_target_specs(self, specs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+        normalized: List[Dict[str, Any]] = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+
+            object_type = str(spec.get("object_type", "")).strip()
+            if not object_type:
+                continue
+
+            quantity_mode = str(spec.get("quantity_mode", "exact")).strip().lower()
+            if quantity_mode not in {"exact", "all"}:
+                quantity_mode = "exact"
+
+            quantity = spec.get("quantity", 1)
+
+            try:
+                quantity = int(quantity)
+            except (TypeError, ValueError):
+                quantity = 1
+
+            quantity = max(1, quantity)
+
+            normalized.append({
+                "object_type": object_type,
+                "quantity_mode": quantity_mode,
+                "quantity": quantity,
+                "spatial_filter": spec.get("spatial_filter"),
+            })
+
+        return normalized
+
+    def _object_matches_spec(
+        self,
+        obj: Dict[str, Any],
+        spec: Dict[str, Any],
+        user_position: Optional[Dict[str, Any]],
+    ) -> bool:
+
+        if not self._object_matches_type(obj, spec.get("object_type", "")):
+            return False
+
+        return self._object_matches_spatial_filter(
+            obj=obj,
+            spatial_filter=spec.get("spatial_filter"),
+            user_position=user_position,
+        )
+
+    def _distance_sq_to_user(
+        self,
+        obj: Dict[str, Any],
+        user_position: Optional[Dict[str, Any]],
+    ) -> float:
+
+        pos = obj.get("position") or {}
+        ux = float((user_position or {}).get("x", 0))
+        uy = float((user_position or {}).get("y", 0))
+        uz = float((user_position or {}).get("z", 0))
+        ox = float(pos.get("x", 0))
+        oy = float(pos.get("y", 0))
+        oz = float(pos.get("z", 0))
+
+        return (ox - ux) ** 2 + (oy - uy) ** 2 + (oz - uz) ** 2
+
+    def _object_matches_spatial_filter(
+        self,
+        obj: Dict[str, Any],
+        spatial_filter: Any,
+        user_position: Optional[Dict[str, Any]],
+    ) -> bool:
+
+        if not isinstance(spatial_filter, dict):
+            return True
+
+        relation = str(spatial_filter.get("relation", "")).strip().lower()
+        target = str(spatial_filter.get("target", "")).strip().lower()
+
+        if not relation:
+            return True
+
+        # For now, only enforce explicit user-relative filters.
+        if target and target != "user":
+            return True
+
+        pos = obj.get("position") or {}
+        ox = float(pos.get("x", 0))
+        oz = float(pos.get("z", 0))
+        ux = float((user_position or {}).get("x", 0))
+        uz = float((user_position or {}).get("z", 0))
+
+        if "left" in relation:
+            return ox < ux
+
+        if "right" in relation:
+            return ox > ux
+
+        if "front" in relation:
+            return oz < uz
+
+        if "behind" in relation or "back" in relation:
+            return oz > uz
+
+        if "near" in relation or "close" in relation:
+            d2 = (ox - ux) ** 2 + (oz - uz) ** 2
+            return d2 <= (1.5 ** 2)
+
+        return True
+
+    def _object_matches_type(self, obj: Dict[str, Any], object_type: str) -> bool:
+
+        token = str(object_type or "").strip().lower()
+        if not token:
+            return False
+
+        if token.endswith("s") and not token.endswith("ss") and len(token) > 2:
+            token = token[:-1]
+
+        name = str(obj.get("name", "")).strip().lower()
+        category = str(obj.get("category", "")).strip().lower()
+        subcategory = str(obj.get("subcategory", "")).strip().lower()
+        
+        return token in name or token == category or token == subcategory
 
 # Test
 if __name__ == "__main__":
