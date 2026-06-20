@@ -753,6 +753,12 @@ class Orchestrator:
                     "message": f"Removed {len(removed_ids)} object(s)",
                     "removed": removed_entries,
                 }]
+                state["final_actions"] += [
+                    {
+                        "object_id": remove_id,
+                    }
+                    for remove_id in removed_ids
+                ]
             else:
                 state["success"] = False
                 state["error_message"] = (
@@ -803,12 +809,19 @@ class Orchestrator:
             
             if success_count == len(complete_objects):
                 state["success"] = True
-                state["final_actions"] = [{
-                    "success": True,
-                    "count": success_count,
-                    "action": "add_multiple" if len(complete_objects) > 1 else "add",
-                    "message": f"Added {success_count} object(s)"
-                }]
+                state["final_actions"] = [
+                        {
+                        "success": True,
+                        "count": success_count,
+                        "action": "add_multiple" if len(complete_objects) > 1 else "add",
+                        "message": f"Added {success_count} object(s)"
+                    }
+                ]
+                state["final_actions"] += [
+                    {
+                        "object_id": obj["id"],
+                    } for obj in complete_objects
+                ] 
             else:
                 state["success"] = False
                 state["error_message"] = f"Only {success_count}/{len(complete_objects)} objects added"
@@ -892,8 +905,36 @@ class Orchestrator:
             return []
         
         full_history = self.conversation_history[session_id]
-        return full_history[-limit:] if len(full_history) > 0 else []
-
+        current_ids = {obj['id'] for obj in self.database.scene_data.get('objects', [])}
+        
+        context = []
+        for t in full_history[-limit:]:
+            # filter involved_objects to only those still in scene
+            still_existing = [
+                oid for oid in t.get('involved_objects', [])
+                if oid in current_ids
+            ]
+            context.append({
+                'turn': t['turn'],
+                'user_prompt': t['user_prompt'],
+                'involved_objects': still_existing,  # only existing objects
+                'command_type': t['command_type'],
+                'success': t['success']
+            })
+        print(f"   Recent context: {[{'turn': c['turn'], 'objects': c['involved_objects']} for c in context]}")
+        return context
+    '''
+        return [
+            {
+                'turn': t['turn'],
+                'user_prompt': t['user_prompt'],
+                'involved_objects': t.get('involved_objects', []),  # resolved IDs
+                'command_type': t['command_type'],
+                'success': t['success']
+            }
+            for t in full_history[-limit:]
+        ]
+'''
     def _store_turn(self, state: MASState):
             """Store a complete turn in conversation history"""
             session_id = state.get("session_id", "default")
@@ -902,13 +943,23 @@ class Orchestrator:
                 self.conversation_history[session_id] = []
             
             full_history = self.conversation_history[session_id]
-            
+
+            final_actions = state.get("final_actions", []) or []
+            resolved_ids = [
+                a["object_id"] for a in final_actions 
+                if a.get("object_id")
+            ]
+            print(f"   Storing turn — final_actions: {final_actions}")
+            print(f"   Storing turn — resolved_ids: {resolved_ids}")
+
             turn_entry = {
                 'turn': len(full_history) + 1,
                 'timestamp': time.time(),
                 'user_prompt': state.get("user_prompt", ""),
                 'parsed_command': state.get("parsed_command"),
                 'command_type': state.get("command_type"),
+                # resolved IDs from execution
+                'involved_objects': resolved_ids,         
                 'proposed_placement': state.get("proposed_placement"),
                 'verification_result': state.get("verification_result"),
                 'final_actions': state.get("final_actions"),

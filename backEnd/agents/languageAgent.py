@@ -27,12 +27,17 @@ class LanguageAgent:
             context_str = "\nRECENT CONVERSATION HISTORY:\n"
             for turn in context_history:
                 context_str += f"Turn {turn['turn']}: User: \"{turn['user_prompt']}\"\n"
+                if turn.get('involved_objects'):
+                    context_str += f"  → Resolved objects: {', '.join(turn['involved_objects'])}\n"
                 if turn['success']:
-                    context_str += f"  → Success: {turn.get('spatial_updates', {}).get('action', 'N/A')}\n"
+                    context_str += f"  → Success\n"
                 else:
-                    context_str += f"  → Failed: {turn.get('error', 'Unknown error')}\n"
-            context_str += "\nUse this history to understand pronouns (\"it\", \"them\") and implicit references.\n"
-
+                    context_str += f"  → Failed\n"
+            last_successful = [t for t in context_history if t.get('success') and t.get('involved_objects')]
+            if last_successful:
+                last_obj = last_successful[-1]['involved_objects'][-1]
+                context_str += f"\nMOST RECENTLY TOUCHED OBJECT: {last_obj}\n"
+                context_str += f"When resolving 'it', 'them', or other pronouns with no specific context clue, default to: {last_obj}\n"
         system_prompt = """You are a command analyzer for a 3D spatial reasoning system.
         
         Analyze user commands and output JSON with:

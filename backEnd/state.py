@@ -93,13 +93,13 @@ class MASState(TypedDict):
     - has_collision: bool
     - valid: bool
     - message: str
-    - colliding_objects: Optional[List[str]]
+    - violations: Optional[List[Dict]] each with mover, anchor, overlap, mover_position, anchor_position, suggestion
     """
     
     collision_info: Optional[Dict[str, Any]]
     """
     Detailed collision information for retry logic:
-    - colliding_objects: List[str]
+    - colliding_pairs: List[Dict] each with mover, anchor, overlap, mover_position, anchor_position, suggestion
     - suggestion: str
     - severity: Optional[str]
     """
@@ -200,7 +200,7 @@ class VerificationResult(TypedDict):
     has_collision: bool
     valid: bool
     message: str
-    colliding_objects: Optional[List[str]]
+    violations: Optional[List[Dict[str, Any]]]
 
 
 class ExecutionResult(TypedDict):
