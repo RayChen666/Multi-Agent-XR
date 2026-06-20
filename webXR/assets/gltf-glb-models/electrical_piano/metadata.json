@@ -3,11 +3,10 @@
   "category": "furniture",
   "subcategory": "musical instrument",
   "default_scale": {
-    "x": 0.1,
-    "y": 0.1,
-    "z": 0.1
+    "x": 0.3333333333333333,
+    "y": 0.3333333333333333,
+    "z": 0.3333333333333333
   },
-  "y_offset": 0.3,
   "properties": {
     "movable": true,
     "interactive": true,
