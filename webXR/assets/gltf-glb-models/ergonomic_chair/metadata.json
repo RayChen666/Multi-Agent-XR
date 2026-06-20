@@ -1,31 +1,41 @@
 {
-    "name": "ergonomic chair",
-    "category": "furniture",
-    "subcategory": "seating",
-    "default_scale": {
-      "x": 0.5,
-      "y": 0.5,
-      "z": 0.5
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": true,
-      "weight": "light"
-    },
-    "typical_dimensions": {
-      "width": 0.2,
-      "height": 0.5,
-      "depth": 0.2
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "seat",
-      "ergonomic chair"
-    ],
-    "description": "A standard ergonomic chair suitable for seating beside desks"
+  "name": "ergonomic chair",
+  "category": "furniture",
+  "subcategory": "seating",
+  "default_scale": {
+    "x": 0.5,
+    "y": 0.5,
+    "z": 0.5
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": true,
+    "weight": "light"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "seat",
+    "ergonomic chair"
+  ],
+  "description": "A standard ergonomic chair suitable for seating beside desks",
+  "collision": {
+    "width": 0.167,
+    "height": 0.304,
+    "depth": 0.157,
+    "offset": {
+      "x": 0.084,
+      "y": 0.152,
+      "z": -0.079
+    }
   }
+}

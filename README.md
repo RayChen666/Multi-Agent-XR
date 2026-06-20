@@ -39,18 +39,25 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
     - add your own Gemini-API-Key generated from previous step.
 
 ## Open the project:
-0. **Install python packages in the requirements.txt**:
+1. **Install python packages in the requirements.txt**:
     ```bash
     cd backEnd
     pip install -r requirements.txt
     ```
 
-1. **Check your local IP address by running**:
+2. **Create key.pem and cert.pem in backEnd folder**:
+    ```bash
+    cd backEnd
+    openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+    ```
+    Note: if this is your first time create permission files, just hit *enter* for all questiones popped up for local development.
+    
+3. **Check your local IP address by running**:
     ```bash
     ifconfig | grep "inet " | grep -v 127.0.0.1
     ```
     
-2. **Gather SSL certificate by running**: (you need to run this command everytime you change your IP address)
+4. **Gather SSL certificate by running**: (you need to run this command everytime you change your IP address)
     ```bash
     cd backEnd
     openssl req -x509 -newkey rsa:4096 -nodes \
@@ -58,29 +65,31 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
         -subj "/C=US/ST=State/L=City/O=Dev/CN=your-local-ip-address"
     ```
 
-3. **Open the terminal in the root project folder**:
+5. **Open the terminal in the root project folder**:
     if you just want to test the backend, open terminal in *backEnd* folder, run 
     ```bash
+    cd backEnd
     python main.py
     ```
     if you just want to test the frontend, open another terminal, navigate to the project root folder and run
     ```bash
+    cd Multi-Agent-XR
     npm run dev
     ```
-4. **Trust certificate on devices:**
+6. **Trust certificate on devices:**
     - Desktop: In Chrome browser visit https://localhost:8000 and accept warning
     - Headset: In Quest browser visit https://your-ip-address:8000 and accept warning
 
-5. **Navigate to the scene**:
+7. **Navigate to the scene**:
     To navigate to the scene, go to your browser (either on laptop or XR headset) and type: https://your-ip-address:8081/ for headset while https://localhost:8081/ for laptop browser, and accept warning.
     <p align="center">
     <img src="./docs/images (for README and experiment)/scene_image.png" />
     </p>
 
-6. **Test update position function**:
+8. **Test update position function**:
     In the browser there is a chat box that you can type the command to manipulate the scene. Now it can take any natural language and do the spatial operation with multi-agent system setup.
 
-7. **Bonus: add your own layout and assets resources for personal VR world generation and interaction**:
+9. **Bonus: add your own layout and assets resources for personal VR world generation and interaction**:
     - add reference room layout: naviagte to /webXR/assets/reference_layouts folder, add your own room.jpg for template generation. For example, adding a living_room.jpg with up-view ( Sqaure image for precise layout mimic).
     - add objects: naviagte to /webXR/assets/gltf-glb-models folder, add your own .gltf/.glb objects. Be sure to put object file in a folder with its name, and create the metadata.json for regulating its default size.
 

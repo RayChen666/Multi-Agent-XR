@@ -1,8 +1,21 @@
+import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { gsap } from 'gsap';
 
 
 const gltfLoader = new GLTFLoader();
+
+// ─── AABB state ───────────────────────────────────────────────────────────────
+let aabbVisible = false;
+const aabbHelpers = new Map(); // objectId → mesh (child of gltf.scene)
+
+export function toggleAABB() {
+    aabbVisible = !aabbVisible;
+    console.log(`AABB helpers count: ${aabbHelpers.size}`);
+    aabbHelpers.forEach(helper => { helper.visible = aabbVisible; });
+    console.log(`AABB visualization: ${aabbVisible ? 'ON' : 'OFF'}`);
+    return aabbVisible;
+}
 
 /**
  * Add new object to scene from WebSocket message
@@ -51,10 +64,39 @@ export function addObjectToScene(data, loadedObjects, scene) {
       // Add to scene
       scene.add(gltf.scene);
       loadedObjects.set(objectId, gltf.scene);
-      
+
+      // AABB helper — child of gltf.scene, follows position/rotation/scale automatically
+      if (objectData.collision) {
+        const { width, height, depth } = objectData.collision;
+        const sx = objectData.scale.x, sy = objectData.scale.y, sz = objectData.scale.z;
+
+        const geo = new THREE.BoxGeometry(width / sx, height / sy, depth / sz);
+        const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: 0x00ff00, transparent: true, opacity: 0.15,
+          side: THREE.DoubleSide, depthWrite: false
+        }));
+        mesh.add(new THREE.LineSegments(
+          new THREE.EdgesGeometry(geo),
+          new THREE.LineBasicMaterial({ color: 0x00ff00 })
+        ));
+
+        //mesh.position.set(0, (height / sy) / 2, 0);
+        const offset = objectData.collision.offset;
+        mesh.position.set(
+            (offset?.x ?? 0) / sx,
+            (offset?.y ?? height / 2) / sy,
+            (offset?.z ?? 0) / sz
+        );
+        
+        mesh.visible = aabbVisible;
+        mesh.name = 'aabb_helper';
+        gltf.scene.add(mesh);
+        aabbHelpers.set(objectId, mesh);
+      }
+
       console.log(`Added ${objectData.name} (${objectId}) to scene`);
       
-      // Optional: Spawn animation
+      // Spawn animation
       gltf.scene.scale.set(0, 0, 0);
       gsap.to(gltf.scene.scale, {
         x: objectData.scale.x,
@@ -73,6 +115,7 @@ export function addObjectToScene(data, loadedObjects, scene) {
 
 /**
  * Update object position from WebSocket message
+ * AABB moves automatically as child of threeObject
  */
 export function updateObjectPosition(data, loadedObjects) {
   const threeObject = loadedObjects.get(data.objectId);
@@ -92,6 +135,7 @@ export function updateObjectPosition(data, loadedObjects) {
 
 /**
  * Update object rotation from WebSocket message
+ * AABB rotates automatically as child of threeObject
  */
 export function updateObjectRotation(data, loadedObjects) {
   const threeObject = loadedObjects.get(data.objectId);
@@ -117,13 +161,10 @@ function disposeThreeObject(root) {
     if (child.geometry && typeof child.geometry.dispose === 'function') {
       child.geometry.dispose();
     }
-
     if (child.material) {
       if (Array.isArray(child.material)) {
         child.material.forEach((mat) => {
-          if (mat && typeof mat.dispose === 'function') {
-            mat.dispose();
-          }
+          if (mat && typeof mat.dispose === 'function') mat.dispose();
         });
       } else if (typeof child.material.dispose === 'function') {
         child.material.dispose();
@@ -134,6 +175,7 @@ function disposeThreeObject(root) {
 
 /**
  * Remove object from scene from WebSocket message
+ * AABB is a child of threeObject — disposed automatically with parent
  */
 export function removeObjectFromScene(data, loadedObjects, scene) {
   const { objectId, name } = data || {};
@@ -149,7 +191,7 @@ export function removeObjectFromScene(data, loadedObjects, scene) {
     return false;
   }
 
-  // Remove from scene graph first, then dispose resources.
+  aabbHelpers.delete(objectId);
   scene.remove(threeObject);
   disposeThreeObject(threeObject);
   loadedObjects.delete(objectId);
@@ -161,7 +203,7 @@ export function removeObjectFromScene(data, loadedObjects, scene) {
 
 
 /**
- * Add head tracking function for the scene control module
+ * Head tracking
  */
 let ws = null;
 let isTracking = false;
@@ -169,7 +211,6 @@ let isTracking = false;
 export function initHeadTracking(websocket){
   ws = websocket;
   console.log('Head tracking initialized');
-
 }
 
 export function startHeadTracking(){
@@ -182,21 +223,17 @@ export function stopHeadTracking(){
   console.log('Head tracking stopped');
 }
 
-// Convert quaternion to Euler angles
 function quaternion_to_euler(q){
   const {x, y, z, w} = q;
-  // Roll (x-axis)
   const sinr_cosp = 2 * (w * x + y * z);
   const cosr_cosp = 1 - 2 * (x * x + y * y);
   const roll = Math.atan2(sinr_cosp, cosr_cosp);
 
-  // Pitch (y-axis)
   const sinp = 2 * (w * y - z * x);
   const pitch = Math.abs(sinp) >= 1
     ? Math.sign(sinp) * Math.PI / 2
     : Math.asin(sinp);
 
-  // Yaw (z-axis)
   const siny_cosp = 2 * (w * z + x * y);
   const cosy_cosp = 1 - 2 * (y * y + z * z);
   const yaw = Math.atan2(siny_cosp, cosy_cosp);
@@ -205,45 +242,22 @@ function quaternion_to_euler(q){
 }
 
 export function updateHeadTracking(frame, referenceSpace){
-  // console.log('Tracking check:', { isTracking, wsReady: ws?.readyState === 1, frame, referenceSpace });
   if (!isTracking || !ws || ws.readyState !== WebSocket.OPEN){ return; }
-  
   if (!frame || !referenceSpace){ return; }
   
-  // Get viewer pose from XR frame
   const pose = frame.getViewerPose(referenceSpace);
-
   if (!pose) { return; }
 
-  // debugg for seeing user head position
-  // console.log('Transform:', pose.transform);
-  // console.log('Position:', pose.transform?.position);
-
-  // Extract position and rotation
   const position = pose.transform.position;
   const orientation = pose.transform.orientation;
-
-  // convert orientation to euler angels
   const euler = quaternion_to_euler(orientation);
 
-  // send the head information to the backEnd (in JSON format)
   ws.send(JSON.stringify({
     type: 'head_position_update',
     data: {
-      position: {
-        x: position.x,
-        y: position.y,
-        z: position.z    
-      },
-      rotation: {
-        x: euler.x,
-        y: euler.y,
-        z: euler.z
-      }
+      position: { x: position.x, y: position.y, z: position.z },
+      rotation: { x: euler.x, y: euler.y, z: euler.z }
     },
     timestamp: Date.now()
   }));
-
-
-
 }

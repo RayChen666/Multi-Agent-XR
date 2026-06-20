@@ -1,33 +1,43 @@
 {
-    "name": "cabinet short",
-    "category": "furniture",
-    "subcategory": "surface",
-    "default_scale": {
-      "x": 0.6,
-      "y": 0.6,
-      "z": 0.6
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": false,
-      "weight": "heavy"
-    },
-    "typical_dimensions": {
-      "width": 1.2,
-      "height": 0.75,
-      "depth": 0.6
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "cabinet",
-      "short cabinet",
-      "small cabinet",
-      "square cabinet"
-    ],
-    "description": "A smaller cabinet that can put a plant or vase, typically beside desk or bed"
+  "name": "cabinet short",
+  "category": "furniture",
+  "subcategory": "surface",
+  "default_scale": {
+    "x": 0.6,
+    "y": 0.6,
+    "z": 0.6
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 1.2,
+    "height": 0.75,
+    "depth": 0.6
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "cabinet",
+    "short cabinet",
+    "small cabinet",
+    "square cabinet"
+  ],
+  "description": "A smaller cabinet that can put a plant or vase, typically beside desk or bed",
+  "collision": {
+    "width": 0.16,
+    "height": 0.158,
+    "depth": 0.13,
+    "offset": {
+      "x": 0.074,
+      "y": 0.079,
+      "z": -0.058
+    }
+  }
 }

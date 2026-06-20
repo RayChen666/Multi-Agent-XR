@@ -1,0 +1,43 @@
+{
+  "name": "TV set",
+  "category": "furniture",
+  "subcategory": "entertainment",
+  "default_scale": {
+    "x": 0.3333333333333333,
+    "y": 0.3333333333333333,
+    "z": 0.3333333333333333
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "theater",
+    "TV",
+    "home theater",
+    "TV and speakers set"
+  ],
+  "description": "A set of funitures that people can watch shows and movies",
+  "collision": {
+    "width": 0.719,
+    "height": 0.473,
+    "depth": 0.517,
+    "offset": {
+      "x": -0.0,
+      "y": 0.122,
+      "z": 0.0
+    }
+  }
+}

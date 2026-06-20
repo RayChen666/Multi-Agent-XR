@@ -12,3 +12,4 @@ cryptography
 langgraph
 os
 dotenv
+trimesh

@@ -1,0 +1,41 @@
+{
+  "name": "petronas twin tower",
+  "category": "building",
+  "subcategory": "tower",
+  "default_scale": {
+    "x": 0.1,
+    "y": 0.1,
+    "z": 0.1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 1.2,
+    "height": 0.75,
+    "depth": 0.6
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "petronas twin tower",
+    "twin tower"
+  ],
+  "description": "The Petronas Twin Towers, a pair of skyscrapers in Kuala Lumpur, Malaysia",
+  "collision": {
+    "width": 4.209,
+    "height": 11.683,
+    "depth": 2.583,
+    "offset": {
+      "x": -0.005,
+      "y": 5.842,
+      "z": 0.351
+    }
+  }
+}

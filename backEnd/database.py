@@ -334,6 +334,19 @@ class Database:
             self.id_counters[base_name] = next_id
             object_data['id'] = f"{base_name}_{next_id:02d}"
 
+        # inject collision dims from metadata
+        if 'collision' not in object_data:
+            try:
+                repo_root = Path(__file__).resolve().parents[1]
+                asset_name = object_data.get('name', '').replace(' ', '_')
+                meta_path = repo_root / "webXR" / "assets" / "gltf-glb-models" / asset_name / "metadata.json"
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                object_data['collision'] = meta.get('collision')
+            except Exception as e:
+                print(f"Could not load collision metadata for {object_data.get('name')}: {e}")
+
+
         self.objects.append(object_data)
         self.added_object_ids.add(object_data['id'])
         print(f"Added new object: {object_data['name']} ({object_data['id']})")

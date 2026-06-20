@@ -1,31 +1,41 @@
 {
-    "name": "sofa",
-    "category": "furniture",
-    "subcategory": "surface",
-    "default_scale": {
-      "x": 0.00025,
-      "y": 0.00025,
-      "z": 0.00025
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": false,
-      "weight": "heavy"
-    },
-    "typical_dimensions": {
-      "width": 1.2,
-      "height": 0.75,
-      "depth": 0.6
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "sofa",
-      "rest seating"
-    ],
-    "description": "A regular sofa that people can lay or seat on it to have a rest"
+  "name": "sofa",
+  "category": "furniture",
+  "subcategory": "surface",
+  "default_scale": {
+    "x": 0.00025,
+    "y": 0.00025,
+    "z": 0.00025
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 1.2,
+    "height": 0.75,
+    "depth": 0.6
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "sofa",
+    "rest seating"
+  ],
+  "description": "A regular sofa that people can lay or seat on it to have a rest",
+  "collision": {
+    "width": 0.883,
+    "height": 0.23,
+    "depth": 0.261,
+    "offset": {
+      "x": -0.001,
+      "y": 0.117,
+      "z": -0.0
+    }
+  }
 }

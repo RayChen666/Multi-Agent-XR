@@ -1,32 +1,41 @@
 {
-    "name": "electrical piano",
-    "category": "furniture",
-    "subcategory": "musical instrument",
-    "default_scale": {
-      "x": 0.1,
-      "y": 0.1,
-      "z": 0.1
-    },
-    "y_offset": 0.3,
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": true,
-      "weight": "heavy"
-    },
-    "typical_dimensions": {
-      "width": 0.2,
-      "height": 0.5,
-      "depth": 0.2
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "musical instrument",
-      "piano"
-    ],
-    "description": "A musical instrument user can play with"
+  "name": "electrical piano",
+  "category": "furniture",
+  "subcategory": "musical instrument",
+  "default_scale": {
+    "x": 0.3333333333333333,
+    "y": 0.3333333333333333,
+    "z": 0.3333333333333333
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": true,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "musical instrument",
+    "piano"
+  ],
+  "description": "A musical instrument user can play with",
+  "collision": {
+    "width": 0.45,
+    "height": 0.326,
+    "depth": 0.168,
+    "offset": {
+      "x": 0.001,
+      "y": -0.143,
+      "z": 0.005
+    }
   }
+}

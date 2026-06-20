@@ -1,33 +1,43 @@
 {
-    "name": "desk",
-    "category": "furniture",
-    "subcategory": "surface",
-    "default_scale": {
-      "x": 0.6,
-      "y": 0.6,
-      "z": 0.6
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": false,
-      "weight": "heavy"
-    },
-    "typical_dimensions": {
-      "width": 1.2,
-      "height": 0.75,
-      "depth": 0.6
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "office desk",
-      "work desk",
-      "writing desk",
-      "workstation"
-    ],
-    "description": "A standard office desk suitable for use with a chair, typically placed against a wall"
+  "name": "desk",
+  "category": "furniture",
+  "subcategory": "surface",
+  "default_scale": {
+    "x": 0.6,
+    "y": 0.6,
+    "z": 0.6
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 1.2,
+    "height": 0.75,
+    "depth": 0.6
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "office desk",
+    "work desk",
+    "writing desk",
+    "workstation"
+  ],
+  "description": "A standard office desk suitable for use with a chair, typically placed against a wall",
+  "collision": {
+    "width": 0.441,
+    "height": 0.231,
+    "depth": 0.235,
+    "offset": {
+      "x": 0.214,
+      "y": 0.115,
+      "z": -0.11
+    }
+  }
 }

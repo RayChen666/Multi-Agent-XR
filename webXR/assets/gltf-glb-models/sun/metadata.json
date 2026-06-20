@@ -1,31 +1,41 @@
 {
-    "name": "sun",
-    "category": "furniture",
-    "subcategory": "decoration",
-    "default_scale": {
-      "x": 0.1,
-      "y": 0.1,
-      "z": 0.1
-    },
-    "properties": {
-      "movable": true,
-      "interactive": true,
-      "canSitOn": true,
-      "weight": "light"
-    },
-    "typical_dimensions": {
-      "width": 0.2,
-      "height": 0.5,
-      "depth": 0.2
-    },
-    "default_rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "aliases": [
-      "seat",
-      "dining chair"
-    ],
-    "description": "A standard dining chair suitable for seating at tables"
+  "name": "sun",
+  "category": "furniture",
+  "subcategory": "decoration",
+  "default_scale": {
+    "x": 0.1,
+    "y": 0.1,
+    "z": 0.1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": true,
+    "weight": "light"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "seat",
+    "dining chair"
+  ],
+  "description": "A standard dining chair suitable for seating at tables",
+  "collision": {
+    "width": 0.301,
+    "height": 0.34,
+    "depth": 0.054,
+    "offset": {
+      "x": -0.0,
+      "y": 0.02,
+      "z": 0.002
+    }
   }
+}
