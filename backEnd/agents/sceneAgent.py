@@ -505,7 +505,8 @@ class SceneAgent:
         for obj in scene_objects:
             name = str(obj.get("name", "")).lower()
             category = str(obj.get("category", "")).lower()
-            if obj_type in name or obj_type == category:
+            obj_id = str(obj.get("id", "")).lower()
+            if obj_type in name or obj_type == category or obj_type == obj_id:
                 matches.append(obj)
 
         return matches

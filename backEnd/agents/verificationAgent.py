@@ -807,8 +807,9 @@ class VerificationAgent:
         name = str(obj.get("name", "")).strip().lower()
         category = str(obj.get("category", "")).strip().lower()
         subcategory = str(obj.get("subcategory", "")).strip().lower()
-        
-        return token in name or token == category or token == subcategory
+        obj_id = str(obj.get("id", "")).strip().lower()
+
+        return token in name or token == category or token == subcategory or token == obj_id
 
 # Test
 if __name__ == "__main__":

@@ -129,6 +129,12 @@
 				color: #ff9800;
 				border-left: 3px solid #ff9800;
 			}
+
+			#status.warning {
+				background: rgba(255, 213, 79, 0.2);
+				color: #ffd54f;
+				border-left: 3px solid #ffd54f;
+			}
 			
 			.examples {
 				margin-top: 15px;
@@ -271,7 +277,20 @@
 						updateStatus(`✅ Success: ${command}`, 'success');
 						input.value = '';  // Clear input on success
 					} else {
-						updateStatus(`❌ Failed: ${result.message || 'Unknown error'}`, 'error');
+						const detail = result.detail;
+						if (detail && typeof detail === 'object' && detail.type === 'collision') {
+							let msg = detail.message || 'Unable to perform action due to collision';
+							if (detail.colliding_pairs?.length) {
+								const pairs = detail.colliding_pairs
+									.map(p => `${p.mover} ↔ ${p.anchor}`)
+									.join(', ');
+								msg += ` (${pairs})`;
+							}
+							updateStatus(`⚠️ ${msg}`, 'warning');
+						} else {
+							const errorMsg = (typeof detail === 'string' ? detail : detail?.message) || result.message || 'Unknown error';
+							updateStatus(`❌ Failed: ${errorMsg}`, 'error');
+						}
 					}
 					
 				} catch (error) {
