@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "seating",
   "default_scale": {
-    "x": 0.003,
-    "y": 0.003,
-    "z": 0.003
+    "x": 0.009,
+    "y": 0.009,
+    "z": 0.009
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "light"
   },
   "typical_dimensions": {
-    "width": 0.1,
-    "height": 0.4,
-    "depth": 0.1
+    "width": 0.3,
+    "height": 1.2,
+    "depth": 0.3
   },
   "default_rotation": {
     "x": 0,
@@ -30,12 +30,12 @@
   ],
   "description": "A simple wooden stool for seating, compact and lightweight",
   "collision": {
-    "width": 0.121,
-    "height": 0.181,
-    "depth": 0.121,
+    "width": 0.363,
+    "height": 0.543,
+    "depth": 0.363,
     "offset": {
       "x": 0.0,
-      "y": 0.09,
+      "y": 0.27,
       "z": 0.0
     }
   }

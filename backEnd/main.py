@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Optional, Set
+from typing import Any, List, Dict, Optional, Set
 from orchestrator import Orchestrator
 from __init__ import LanguageAgent, SceneAgent, AssetAgent, CodeAgent, VerificationAgent
 from database import Database
@@ -13,6 +13,13 @@ import ssl
 class CommandRequest(BaseModel):
     command: str
     user_position: Optional[Dict[str, float]] = None
+    # Embodied head-gaze snapshot taken at command-submit time. Well-formed shapes:
+    #   {"type": "floor",  "point": {...}}
+    #   {"type": "wall",   "wall_id": str, "point": {...}}
+    #   {"type": "object", "object_id": str, "point": {...}}
+    #   {"type": "none"}   (gaze hit nothing)
+    # Optional for backwards compatibility; absence is treated as "none".
+    gaze: Optional[Dict[str, Any]] = None
 
 '''Server side code with WebSocket support'''
 app = FastAPI(title = "XR Multi-Agent Spatial System")
@@ -193,6 +200,11 @@ async def process_natural_language_command(request: CommandRequest):
         # Update user position if provided from VR headset
         if request.user_position:
             orchestration_agent.user_position = request.user_position
+
+        # Update head-gaze snapshot (deictic grounding for "there"/"on that").
+        # Always set it: a fresh command should never reuse a stale prior gaze.
+        # None / missing is normalized to {"type": "none"}.
+        orchestration_agent.gaze = request.gaze or {"type": "none"}
         
         # Process command through orchestrator
         success = orchestration_agent.process_command(request.command)

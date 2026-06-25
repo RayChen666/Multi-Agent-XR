@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "surface",
   "default_scale": {
-    "x": 0.00025,
-    "y": 0.00025,
-    "z": 0.00025
+    "x": 0.00075,
+    "y": 0.00075,
+    "z": 0.00075
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "heavy"
   },
   "typical_dimensions": {
-    "width": 1.2,
-    "height": 0.75,
-    "depth": 0.6
+    "width": 3.6,
+    "height": 2.25,
+    "depth": 1.8
   },
   "default_rotation": {
     "x": 0,
@@ -29,12 +29,12 @@
   ],
   "description": "A regular sofa that people can lay or seat on it to have a rest",
   "collision": {
-    "width": 0.883,
-    "height": 0.23,
-    "depth": 0.261,
+    "width": 2.649,
+    "height": 0.69,
+    "depth": 0.783,
     "offset": {
-      "x": -0.001,
-      "y": 0.117,
+      "x": -0.003,
+      "y": 0.351,
       "z": -0.0
     }
   }

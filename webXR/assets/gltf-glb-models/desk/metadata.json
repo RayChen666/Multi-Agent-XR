@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "surface",
   "default_scale": {
-    "x": 0.6,
-    "y": 0.6,
-    "z": 0.6
+    "x": 1.8,
+    "y": 1.8,
+    "z": 1.8
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "heavy"
   },
   "typical_dimensions": {
-    "width": 1.2,
-    "height": 0.75,
-    "depth": 0.6
+    "width": 3.6,
+    "height": 2.25,
+    "depth": 1.8
   },
   "default_rotation": {
     "x": 0,
@@ -31,13 +31,13 @@
   ],
   "description": "A standard office desk suitable for use with a chair, typically placed against a wall",
   "collision": {
-    "width": 0.441,
-    "height": 0.231,
-    "depth": 0.235,
+    "width": 1.323,
+    "height": 0.693,
+    "depth": 0.705,
     "offset": {
-      "x": 0.214,
-      "y": 0.115,
-      "z": -0.11
+      "x": 0.642,
+      "y": 0.345,
+      "z": -0.33
     }
   }
 }

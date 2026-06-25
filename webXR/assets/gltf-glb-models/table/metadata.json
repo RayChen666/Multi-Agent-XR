@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "surface",
   "default_scale": {
-    "x": 0.3333333333333333,
-    "y": 0.3333333333333333,
-    "z": 0.3333333333333333
+    "x": 1,
+    "y": 1,
+    "z": 1
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "medium"
   },
   "typical_dimensions": {
-    "width": 0.6,
-    "height": 0.3,
-    "depth": 0.6
+    "width": 1.8,
+    "height": 0.9,
+    "depth": 1.8
   },
   "default_rotation": {
     "x": 0,
@@ -28,12 +28,12 @@
   ],
   "description": "A standard table with a flat surface suitable for placing objects or dining",
   "collision": {
-    "width": 0.616,
-    "height": 0.235,
-    "depth": 0.616,
+    "width": 1.848,
+    "height": 0.705,
+    "depth": 1.848,
     "offset": {
       "x": 0.0,
-      "y": 0.117,
+      "y": 0.351,
       "z": 0.0
     }
   }

@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "seating",
   "default_scale": {
-    "x": 0.5,
-    "y": 0.5,
-    "z": 0.5
+    "x": 1.5,
+    "y": 1.5,
+    "z": 1.5
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "light"
   },
   "typical_dimensions": {
-    "width": 0.2,
-    "height": 0.5,
-    "depth": 0.2
+    "width": 0.6,
+    "height": 1.5,
+    "depth": 0.6
   },
   "default_rotation": {
     "x": 0,
@@ -29,13 +29,13 @@
   ],
   "description": "A standard ergonomic chair suitable for seating beside desks",
   "collision": {
-    "width": 0.167,
-    "height": 0.304,
-    "depth": 0.157,
+    "width": 0.501,
+    "height": 0.912,
+    "depth": 0.471,
     "offset": {
-      "x": 0.084,
-      "y": 0.152,
-      "z": -0.079
+      "x": 0.252,
+      "y": 0.456,
+      "z": -0.237
     }
   }
 }

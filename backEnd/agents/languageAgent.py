@@ -14,7 +14,8 @@ class LanguageAgent:
     
     def parse_prompt(self, 
                      prompt: str,
-                     context_history: list = None) -> dict:
+                     context_history: list = None,
+                     gaze: dict = None) -> dict:
         """
         Parse & Decide: Analyze command for routing WITHOUT losing semantic information.
         
@@ -43,6 +44,7 @@ class LanguageAgent:
         
         Analyze user commands and output JSON with:
         
+
         {
             "original_prompt": <exact user prompt - preserve this!>,
             "command_type": "ADD/DELETE" | "POS/ROTATE" | "Vague/Complex",
@@ -460,10 +462,111 @@ class LanguageAgent:
             }
         }
         
+        TWO KINDS OF VAGUE REFERENCE (very important — do not confuse them):
+
+        A) VAGUE OBJECT reference → answers "WHICH object?"
+           Words: "this", "that", "it", "that one", "the chair" (with no new object created).
+           Resolve via involved_objects + RECENT CONVERSATION HISTORY (the last
+           touched object). This is the EXISTING behavior. It does NOT use gaze.
+           Example: "remove this" → the most recently touched object.
+
+        B) VAGUE POSITION reference → answers "WHERE?"
+           Words: "there", "here", "over there", "right here", "in that spot",
+           "on that", "put it there".
+           Resolve via HEAD-GAZE (the CURRENT HEAD-GAZE block, when provided).
+           Example: "put the chair over there" → 'there' = the gaze location.
+
+        OUTPUT FIELD — resolved_spatial_target:
+        Add this top-level field to your JSON output.
+        - Set it to null by default.
+        - Populate it ONLY when ALL of these hold:
+            1. The command contains a VAGUE POSITION reference (type B above), AND
+            2. There is NO explicit spatial anchor in the command
+               (e.g. "next to the table", "back-left corner", "against the wall"), AND
+            3. A valid CURRENT HEAD-GAZE is provided this turn.
+        - Shape when populated:
+            "resolved_spatial_target": {
+                "source": "gaze",
+                "type": "object" | "floor" | "wall",
+                "object_id": "<id>",            // ONLY when gaze type == object
+                "point": {"x": .., "y": .., "z": ..}  // when gaze type == floor/wall
+            }
+          When the user gazes AT an object while saying "on that"/"there", prefer
+          type "object" with its object_id (a relation), not the raw point.
+
+        PRECEDENCE (the "use gaze only when needed" rule):
+        - Explicit spatial language  >  head-gaze  >  default heuristics.
+        - If the command already has an explicit anchor, keep that anchor in
+          spatial_concepts and set resolved_spatial_target = null.
+        - If gaze is unavailable/"none" this turn, NEVER fabricate coordinates —
+          leave resolved_spatial_target = null.
+
+        EXAMPLE (vague position + gaze on floor):
+        CURRENT HEAD-GAZE: type=floor, point={"x": 1.20, "y": -3.00, "z": -5.40}
+        Input: "put the chair over there"
+        {
+            "original_prompt": "put the chair over there",
+            "command_type": "POS/ROTATE",
+            "involved_objects": ["chair"],
+            "spatial_concepts": ["move to the gazed-at location"],
+            "intent_summary": "Move the chair to the location the user is looking at",
+            "action_hints": {
+                "primary_action": "move",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": true
+            },
+            "resolved_spatial_target": {
+                "source": "gaze",
+                "type": "floor",
+                "point": {"x": 1.20, "y": -3.00, "z": -5.40}
+            }
+        }
+
+        EXAMPLE (vague position + gaze on an object):
+        CURRENT HEAD-GAZE: type=object, object_id="table_01", point={"x": 0.50, "y": -2.40, "z": -4.00}
+        Input: "add a lamp on that"
+        {
+            "original_prompt": "add a lamp on that",
+            "command_type": "ADD/DELETE",
+            "involved_objects": ["lamp"],
+            "spatial_concepts": ["place on the gazed-at object"],
+            "intent_summary": "Add a lamp on the object the user is looking at",
+            "action_hints": {
+                "primary_action": "add",
+                "requires_asset_selection": true,
+                "requires_spatial_reasoning": true
+            },
+            "resolved_spatial_target": {
+                "source": "gaze",
+                "type": "object",
+                "object_id": "table_01",
+                "point": {"x": 0.50, "y": -2.40, "z": -4.00}
+            }
+        }
+
+        EXAMPLE (explicit anchor present → gaze NOT used):
+        CURRENT HEAD-GAZE: type=floor, point={"x": 1.20, "y": -3.00, "z": -5.40}
+        Input: "put the chair next to the table"
+        {
+            "original_prompt": "put the chair next to the table",
+            "command_type": "POS/ROTATE",
+            "involved_objects": ["chair"],
+            "spatial_concepts": ["next to the table"],
+            "intent_summary": "Move the chair beside the existing table",
+            "action_hints": {
+                "primary_action": "move",
+                "requires_asset_selection": false,
+                "requires_spatial_reasoning": true
+            },
+            "resolved_spatial_target": null
+        }
+
         CRITICAL: Always preserve the original_prompt field exactly as given!
         """
-        
-        full_prompt = f"{system_prompt}{context_str}\n\nInput: {prompt}\n\nOutput JSON:"
+
+        gaze_context = self._build_gaze_context(gaze)
+
+        full_prompt = f"{system_prompt}{context_str}{gaze_context}\n\nInput: {prompt}\n\nOutput JSON:"
         
         try:
             response = self.model.generate_content(
@@ -507,7 +610,11 @@ class LanguageAgent:
                         'requires_spatial_reasoning': True
                     }
 
+                if 'resolved_spatial_target' not in parsed:
+                    parsed['resolved_spatial_target'] = None
+
                 self._normalize_delete_intent(parsed, prompt)
+                self._normalize_resolved_spatial_target(parsed, gaze)
                 
                 print(f"Language Agent analyzed:")
                 print(f"   Command Type: {parsed['command_type']}")
@@ -583,10 +690,94 @@ class LanguageAgent:
                 'primary_action': primary_action,
                 'requires_asset_selection': command_type == 'ADD/DELETE',
                 'requires_spatial_reasoning': True
-            }
+            },
+            'resolved_spatial_target': None
         }
         self._normalize_delete_intent(parsed, prompt)
         return parsed
+
+    def _build_gaze_context(self, gaze: dict) -> str:
+        """
+        Build the dynamic CURRENT HEAD-GAZE block injected into the prompt.
+
+        Returns an explicit "unavailable" notice when there is no valid gaze, so
+        the model is told NOT to fabricate coordinates (graceful fallback for the
+        "gaze == none" pitfall).
+        """
+        if not isinstance(gaze, dict):
+            gaze = None
+
+        gaze_type = (gaze or {}).get('type') if gaze else None
+
+        if not gaze or gaze_type in (None, 'none'):
+            return (
+                "\nCURRENT HEAD-GAZE: unavailable this turn.\n"
+                "- Do NOT invent coordinates. If the command relies on a vague "
+                "position ('there'/'here') with no other spatial anchor, set "
+                "resolved_spatial_target = null.\n"
+            )
+
+        point = gaze.get('point') or {}
+        if gaze_type == 'object':
+            return (
+                "\nCURRENT HEAD-GAZE (embodied pointing):\n"
+                f"- The user is currently looking AT an existing object: {gaze.get('object_id')}\n"
+                f"- Gaze world point (reference): {point}\n"
+                "- If the command uses a vague position toward an object "
+                "('on that', 'there'), prefer resolved_spatial_target.type = "
+                "'object' with this object_id.\n"
+            )
+
+        # floor / wall
+        return (
+            "\nCURRENT HEAD-GAZE (embodied pointing):\n"
+            f"- The user is currently looking at a {gaze_type} location.\n"
+            f"- Gaze world point (treat as 'there'/'here'): {point}\n"
+            "- If the command uses a vague position with no explicit anchor, set "
+            f"resolved_spatial_target.type = '{gaze_type}' and copy this point.\n"
+        )
+
+    def _normalize_resolved_spatial_target(self, parsed: dict, gaze: dict) -> None:
+        """
+        Harden resolved_spatial_target and enforce the safety rule that it can
+        only exist when a valid gaze was actually provided this turn.
+
+        Pitfall guards:
+        - gaze unavailable/"none" → force null (no fabricated targets).
+        - malformed model output → null rather than passing junk to Phase D.
+        - copy authoritative coords/id straight from the gaze snapshot so the
+          numbers always match what the client actually sent.
+        """
+        gaze_valid = (
+            isinstance(gaze, dict)
+            and gaze.get('type') not in (None, 'none')
+        )
+
+        if not gaze_valid:
+            parsed['resolved_spatial_target'] = None
+            return
+
+        target = parsed.get('resolved_spatial_target')
+        if not isinstance(target, dict):
+            # Model chose not to use gaze (e.g. explicit anchor present). Respect that.
+            parsed['resolved_spatial_target'] = None
+            return
+
+        gaze_type = gaze.get('type')
+        normalized = {'source': 'gaze', 'type': gaze_type}
+
+        if gaze_type == 'object':
+            normalized['object_id'] = gaze.get('object_id')
+
+        point = gaze.get('point')
+        if isinstance(point, dict):
+            normalized['point'] = {
+                'x': point.get('x'),
+                'y': point.get('y'),
+                'z': point.get('z'),
+            }
+
+        parsed['resolved_spatial_target'] = normalized
 
     def _normalize_delete_intent(self, parsed: dict, prompt: str) -> None:
         """

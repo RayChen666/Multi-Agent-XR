@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "musical instrument",
   "default_scale": {
-    "x": 0.3333333333333333,
-    "y": 0.3333333333333333,
-    "z": 0.3333333333333333
+    "x": 1,
+    "y": 1,
+    "z": 1
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "heavy"
   },
   "typical_dimensions": {
-    "width": 0.2,
-    "height": 0.5,
-    "depth": 0.2
+    "width": 0.6,
+    "height": 1.5,
+    "depth": 0.6
   },
   "default_rotation": {
     "x": 0,
@@ -29,13 +29,13 @@
   ],
   "description": "A musical instrument user can play with",
   "collision": {
-    "width": 0.45,
-    "height": 0.326,
-    "depth": 0.168,
+    "width": 1.35,
+    "height": 0.978,
+    "depth": 0.504,
     "offset": {
-      "x": 0.001,
-      "y": -0.143,
-      "z": 0.005
+      "x": 0.003,
+      "y": -0.429,
+      "z": 0.015
     }
   }
 }

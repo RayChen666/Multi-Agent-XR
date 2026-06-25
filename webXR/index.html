@@ -202,10 +202,10 @@
 			</div>
 			
 			<div class="button-group">
-				<button type="button" id="execute-btn" onclick="executeCommand()">
+				<button type="button" id="execute-btn" onclick="window.executeCommand()">
 					Execute
 				</button>
-				<button type="button" id="clear-btn" onclick="clearCommand()">
+				<button type="button" id="clear-btn" onclick="window.clearCommand()">
 					Clear
 				</button>
 			</div>
@@ -214,17 +214,17 @@
 			
 			<div class="examples">
 				<div class="examples-title">Quick Examples:</div>
-				<span class="example-cmd" onclick="fillExample('move the chair forward')">
-					move chair forward
+				<span class="example-cmd" onclick="window.fillExample('Add a chair')">
+					Add a chair
 				</span>
-				<span class="example-cmd" onclick="fillExample('rotate the table 90 degrees')">
-					rotate table 90°
+				<span class="example-cmd" onclick="window.fillExample('Rotate the table 90 degrees')">
+					Rotate the table 90°
 				</span>
-				<span class="example-cmd" onclick="fillExample('move the chair to the right')">
-					move chair right
+				<span class="example-cmd" onclick="window.fillExample('Remove the chair beside the table')">
+					Remove the chair beside the table
 				</span>
-				<span class="example-cmd" onclick="fillExample('move the chair back')">
-					move chair back
+				<span class="example-cmd" onclick="window.fillExample('Move the chair towards me')">
+					Move the chair towards me
 				</span>
 			</div>
 		</div>
@@ -232,65 +232,11 @@
 		<script type="module" src="./index.js"></script>
 		
 		<script>
-			// Natural Language Command Functions
-
 			window.getApiBaseUrl = function () {
 				return `${window.location.protocol}//${window.location.hostname}:8000`;
 			};
-			const API_BASE_URL = window.getApiBaseUrl();
-			console.log('🔧 API URL:', API_BASE_URL);
+			console.log('🔧 API URL:', window.getApiBaseUrl());
 
-			async function executeCommand() {
-				const input = document.getElementById('command-input');
-				const statusDiv = document.getElementById('status');
-				const command = input.value.trim();
-				
-				if (!command) {
-					updateStatus('Please enter a command', 'error');
-					return;
-				}
-				
-				// Show processing state
-				updateStatus(`⏳ Processing: "${command}"...`, 'processing');
-				
-				try {
-					const response = await fetch(`${API_BASE_URL}/scene/command`, {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json'
-						},
-						body: JSON.stringify({
-							command: command,
-							user_position: getUserPosition()
-						})
-					});
-					
-					const result = await response.json();
-					
-					if (response.ok && result.status === 'success') {
-						updateStatus(`✅ Success: ${command}`, 'success');
-						input.value = '';  // Clear input on success
-					} else {
-						updateStatus(`❌ Failed: ${result.message || 'Unknown error'}`, 'error');
-					}
-					
-				} catch (error) {
-					console.error('Command execution error:', error);
-					updateStatus(`❌ Error: ${error.message}`, 'error');
-				}
-			}
-			
-			function clearCommand() {
-				document.getElementById('command-input').value = '';
-				document.getElementById('status').className = '';
-				document.getElementById('status').textContent = '';
-			}
-			
-			function fillExample(command) {
-				document.getElementById('command-input').value = command;
-				document.getElementById('command-input').focus();
-			}
-			
 			function updateStatus(message, type) {
 				const statusDiv = document.getElementById('status');
 				statusDiv.textContent = message;
@@ -299,59 +245,13 @@
 
 			window.updateStatus = updateStatus;
 
-			function getUserPosition() {
-				// Try to get VR camera position from Three.js scene
-				// This will be populated by your index.js
-				if (window.vrCamera) {
-					const pos = window.vrCamera.position;
-					return {
-						x: pos.x,
-						y: pos.y,
-						z: pos.z
-					};
-				}
-				
-				// Default position if camera not available yet
-				return {x: 0, y: 0, z: 0};
-			}
-			
-			// Enter key support
 			document.getElementById('command-input').addEventListener('keypress', (e) => {
-				if (e.key === 'Enter') {
-					executeCommand();
+				if (e.key === 'Enter' && typeof window.executeCommand === 'function') {
+					window.executeCommand();
 				}
 			});
-			
-			// Log when page loads
-			console.log('🎯 Natural Language Command Interface Ready');
 
-			// STT: dynamic import from classic script so failures are visible (static <script type="module">
-			// can fail silently on file:// or bad paths). Runs after DOM is ready.
-			(function attachSttListen() {
-				function run() {
-					import('./sttListen.js')
-						.then((m) => {
-							m.initSttPhase1({
-								getApiBaseUrl: () => window.getApiBaseUrl(),
-								setStatus: (msg, type) => window.updateStatus(msg, type),
-							});
-							console.log('🎤 STT Listen module attached');
-						})
-						.catch((err) => {
-							console.error('sttListen.js failed to load:', err);
-							const hint =
-								err && err.message
-									? err.message
-									: 'Failed to load sttListen.js (404? rebuild dev server after webpack copy)';
-							window.updateStatus(`Listen unavailable: ${hint}`, 'error');
-						});
-				}
-				if (document.readyState === 'loading') {
-					document.addEventListener('DOMContentLoaded', run);
-				} else {
-					run();
-				}
-			})();
+			console.log('🎯 Natural Language Command Interface Ready');
 		</script>
 	</body>
 </html>

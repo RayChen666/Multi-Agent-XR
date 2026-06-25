@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "entertainment",
   "default_scale": {
-    "x": 0.3333333333333333,
-    "y": 0.3333333333333333,
-    "z": 0.3333333333333333
+    "x": 1,
+    "y": 1,
+    "z": 1
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "heavy"
   },
   "typical_dimensions": {
-    "width": 0.2,
-    "height": 0.5,
-    "depth": 0.2
+    "width": 0.6,
+    "height": 1.5,
+    "depth": 0.6
   },
   "default_rotation": {
     "x": 0,
@@ -31,12 +31,12 @@
   ],
   "description": "A set of funitures that people can watch shows and movies",
   "collision": {
-    "width": 0.719,
-    "height": 0.473,
-    "depth": 0.517,
+    "width": 2.157,
+    "height": 1.419,
+    "depth": 1.551,
     "offset": {
       "x": -0.0,
-      "y": 0.122,
+      "y": 0.366,
       "z": 0.0
     }
   }

@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "seating",
   "default_scale": {
-    "x": 0.005,
-    "y": 0.005,
-    "z": 0.005
+    "x": 0.015,
+    "y": 0.015,
+    "z": 0.015
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "light"
   },
   "typical_dimensions": {
-    "width": 0.2,
-    "height": 0.5,
-    "depth": 0.2
+    "width": 0.6,
+    "height": 1.5,
+    "depth": 0.6
   },
   "default_rotation": {
     "x": 0,
@@ -29,12 +29,12 @@
   ],
   "description": "A standard dining chair suitable for seating at tables",
   "collision": {
-    "width": 0.173,
-    "height": 0.271,
-    "depth": 0.175,
+    "width": 0.519,
+    "height": 0.813,
+    "depth": 0.525,
     "offset": {
       "x": 0.0,
-      "y": 0.136,
+      "y": 0.408,
       "z": 0.0
     }
   }

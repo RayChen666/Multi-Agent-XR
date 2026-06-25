@@ -718,6 +718,55 @@ Rules:
             return {"candidate_ids": [], "confidence": None, "reasoning": ""}
 
     
+    def _build_gaze_target_context(self, resolved_spatial_target: Optional[Dict]) -> str:
+        """
+        Turn the LanguageAgent's gaze-resolved deictic target into an
+        authoritative placement instruction injected into the spatial prompt.
+
+        The LanguageAgent only populates resolved_spatial_target when the command
+        used a vague POSITION reference ("there"/"on that") with no explicit
+        anchor and a valid gaze existed. So when present here, it should win over
+        the default "in front of the user" heuristic.
+
+        Returns "" (no-op) when there is no usable gaze target, so non-deictic
+        commands behave exactly as before.
+        """
+        if not isinstance(resolved_spatial_target, dict):
+            return ""
+
+        target_type = resolved_spatial_target.get('type')
+        point = resolved_spatial_target.get('point') or {}
+
+        if target_type in ('floor', 'wall'):
+            gx = point.get('x')
+            gz = point.get('z')
+            if gx is None or gz is None:
+                return ""
+            return f"""
+
+            RESOLVED GAZE TARGET (AUTHORITATIVE — this is exactly what 'there'/'here' means):
+            - The user pointed with their head-gaze at this floor location.
+            - Place the object centered at x = {gx}, z = {gz} (keep y on the floor, y = -3.0).
+            - This OVERRIDES default placement heuristics. Do NOT place it "in front of the user".
+            - You MAY apply only small offsets to respect room bounds or avoid collisions.
+            """
+
+        if target_type == 'object' and resolved_spatial_target.get('object_id'):
+            object_id = resolved_spatial_target.get('object_id')
+            near_txt = ""
+            if point.get('x') is not None and point.get('z') is not None:
+                near_txt = f" (gaze point near x = {point.get('x')}, z = {point.get('z')})"
+            return f"""
+
+            RESOLVED GAZE TARGET (AUTHORITATIVE — this is exactly what 'there'/'on that' means):
+            - The user pointed with their head-gaze at an existing object: {object_id}{near_txt}.
+            - Place the target object in direct relation to {object_id} (e.g. on top of it or
+              immediately beside it), not at a generic default location.
+            - This OVERRIDES default placement heuristics. Respect room bounds and avoid collisions.
+            """
+
+        return ""
+
     def _llm_spatial_reasoning(self,
                                parsed_command: Dict,
                                scene_state: Dict,
@@ -767,6 +816,11 @@ Rules:
         spatial_concepts = parsed_command.get('spatial_concepts', [])
         intent_summary = parsed_command.get('intent_summary', original_prompt)
         action_hints = parsed_command.get('action_hints', {})
+        resolved_spatial_target = parsed_command.get('resolved_spatial_target')
+
+        # Phase D: consume the gaze-resolved deictic target ("there" / "on that").
+        # When present, it is authoritative and overrides default placement heuristics.
+        gaze_target_context = self._build_gaze_target_context(resolved_spatial_target)
         
         # Build feedback context if this is an iteration
         feedback_context = ""
@@ -864,13 +918,13 @@ Rules:
             - Maintain proper spacing between objects (minimum 0.1m)
             - Consider functional arrangements (e.g., lamps for lighting, chairs for seating)
             - Ensure aesthetic balance and avoid overcrowding
-            - All objects should be on the floor (y = -1.0)
+            - All objects should be on the floor (y = -3.0)
 
             YOU MUST return multi-object format with ALL objects:
             {{
             "objects": [
-                {{"object_id": "chair_03", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
-                {{"object_id": "table_02", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
+                {{"object_id": "chair_03", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
+                {{"object_id": "table_02", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
             ],
             "reasoning": "Positioned chairs around table..."
             }}
@@ -882,7 +936,7 @@ Rules:
                 Return single-object format:
                 {{
                 "object_id": "...",
-                "position": {{"x": ..., "y": -1.0, "z": ...}},
+                "position": {{"x": ..., "y": -3.0, "z": ...}},
                 "rotation": {{"x": 0, "y": 0, "z": 0}},
                 "action": "place",
                 "reasoning": "Placed object at ..."
@@ -909,14 +963,14 @@ Rules:
             - Maintain proper spacing between objects (minimum 0.3m)
             - Consider functional arrangements (e.g., lamps for lighting, chairs for seating)
             - Ensure aesthetic balance and avoid overcrowding
-            - All objects should be on the floor (y = -1.0)
+            - All objects should be on the floor (y = -3.0)
             
             YOU MUST return multi-object format with ALL objects:
             {{
             "objects": [
-                {{"object_id": "chair_03", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
-                {{"object_id": "chair_04", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
-                {{"object_id": "table_02", "position": {{"x": ..., "y": -1.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
+                {{"object_id": "chair_03", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
+                {{"object_id": "chair_04", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
+                {{"object_id": "table_02", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
             ],
             "reasoning": "Positioned 2 chairs around table for seating arrangement..."
             }}
@@ -928,7 +982,7 @@ Rules:
             Return single-object format:
             {{
             "object_id": "...",
-            "position": {{"x": ..., "y": -1.0, "z": ...}},
+            "position": {{"x": ..., "y": -3.0, "z": ...}},
             "rotation": {{"x": 0, "y": 0, "z": 0}},
             "action": "place",
             "reasoning": "Placed object at ..."
@@ -959,16 +1013,17 @@ Rules:
 
             COORDINATE SYSTEM:
             - X-axis: Left (-) to Right (+)
-            - Y-axis: Down (-) to Up (+), floor is at y=-1
+            - Y-axis: Down (-) to Up (+), floor is at y=-3
             - Z-axis: Forward (-) to Backward (+)
             - Rotations in radians
             - User typically faces -Z direction (forward)
 
             {bounds_context}
+            {gaze_target_context}
             {layout_graph_context}
 
             SPATIAL REASONING RULES:
-            1. "next to" = 0.5 meters offset horizontally
+            1. "next to" = 1.5 meters offset horizontally
             2. "in front of" = offset in -Z direction relative to reference
             3. "behind" = offset in +Z direction
             4. "on" = place on top (y-offset by ~0.3m above surface)
@@ -977,7 +1032,7 @@ Rules:
             7. For rotation: convert degrees to radians (90° = 1.5708 radians)
             8. For multiple objects of the same type: arrange them with spacing (0.5-0.8m apart)
             9. For aesthetic goals like "cozy" or "spacious", consider spacing and orientation
-            10. ALL objects must be placed on the floor (y = -1.0)
+            10. ALL objects must be placed on the floor (y = -3.0)
             11. Ensure that all the objects manipulated are on the floor 
             
             {new_objects_context}
@@ -1016,7 +1071,7 @@ Rules:
             For SINGLE OBJECT:
             {{
                 "object_id": "chair_01",
-                "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
+                "position": {{"x": 0.5, "y": -3.0, "z": -1.5}},
                 "rotation": {{"x": 0, "y": 0, "z": 0}},
                 "action": "move",
                 "reasoning": "Moved chair closer"
@@ -1025,7 +1080,7 @@ Rules:
             For SINGLE OBJECT (with rotation):
             {{
                 "object_id": "chair_01",
-                "position": {{"x": 0.5, "y": -1.0, "z": -1.5}},
+                "position": {{"x": 0.5, "y": -3.0, "z": -1.5}},
                 "rotation": {{"x": 0, "y": 1.57, "z": 0}},
                 "action": "place",
                 "reasoning": "Placed and rotated chair to face table"
@@ -1036,13 +1091,13 @@ Rules:
                 "objects": [
                     {{
                         "object_id": "chair_01",
-                        "position": {{"x": -0.4, "y": -1.0, "z": -2.0}},
+                        "position": {{"x": -0.4, "y": -3.0, "z": -2.0}},
                         "rotation": {{"x": 0, "y": 0, "z": 0}},
                         "action": "place"
                     }},
                     {{
                         "object_id": "chair_02",
-                        "position": {{"x": 0.4, "y": -1.0, "z": -2.0}},
+                        "position": {{"x": 0.4, "y": -3.0, "z": -2.0}},
                         "rotation": {{"x": 0, "y": 0, "z": 0}},
                         "action": "place"
                     }}
@@ -1183,7 +1238,7 @@ Rules:
                     'object_id': obj['id'],
                     'position': {
                         'x': x_pos,
-                        'y': -1.0,  # Floor level
+                        'y': -3.0,  # Floor level
                         'z': -2.0   # 2 meters in front of user
                     },
                     'rotation': {'x': 0, 'y': 0, 'z': 0},

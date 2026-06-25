@@ -8,6 +8,33 @@ import { init } from './init.js';
 import { loadSceneDatabase, getSceneDatabase, SceneQuery } from '../middleware/sceneLoader.js';
 import { setupWebSocket } from '../middleware/wsManager.js';
 import { initHeadTracking, startHeadTracking, updateHeadTracking, toggleAABB  } from '../middleware/sceneControl.js';
+import { initGazeGizmo, updateGazeGizmo, getLatestGazeTarget } from './gazeGizmo.js';
+import {
+  initCommandBridge,
+  executeCommand,
+  clearCommand,
+  fillExample,
+  getUserPosition,
+} from './commandBridge.js';
+import {
+  initSttPhase1,
+  startListen,
+  stopListen,
+  getDraftCommand,
+  getListenState,
+  onDraftChange,
+  onListenStateChange,
+} from './sttListen.js';
+import {
+  initXrControllerBindings,
+  updateXrControllerBindings,
+  wireXrControllerActions,
+} from './xrControllerBindings.js';
+import {
+  initXrHud,
+  setXrCommandText,
+  setXrStatusText,
+} from './xrHud.js';
 
 
 // Global scene query interface for agents
@@ -18,7 +45,28 @@ let websocket;
 let xrReferenceSpace = null;
 let userAvatar = null;
 
+const DESKTOP_CAMERA_OFFSET = { x: 0, y: 1.6, z: 3 };
 
+function applyXrUserSpawn(player, camera) {
+  const spawn = sceneDatabase?.metadata?.userSpawnPoint;
+  if (!spawn) {
+    console.warn('userSpawnPoint missing from scene metadata');
+    return;
+  }
+
+  player.position.set(spawn.x, spawn.y, spawn.z);
+  camera.position.set(0, 0, 0);
+  console.log(`✓ XR spawn applied: (${spawn.x}, ${spawn.y}, ${spawn.z})`);
+}
+
+function restoreDesktopRig(player, camera) {
+  player.position.set(0, 0, 0);
+  camera.position.set(
+    DESKTOP_CAMERA_OFFSET.x,
+    DESKTOP_CAMERA_OFFSET.y,
+    DESKTOP_CAMERA_OFFSET.z,
+  );
+}
 
 async function setupScene({ scene, camera, renderer, player, controllers }) {
   // Load scene database from JSON
@@ -44,6 +92,64 @@ async function setupScene({ scene, camera, renderer, player, controllers }) {
   // Load user avatar
   loadUserAvatar(camera);
 
+  // Head-gaze debug gizmo (visual confirmation only)
+  initGazeGizmo(scene);
+
+  initXrHud(camera);
+  initXrControllerBindings();
+  wireXrControllerActions({
+    startListen: () => startListen({ ptt: true }),
+    stopListen,
+    executeCommand,
+    clearCommand,
+    getListenState,
+  });
+
+  onDraftChange((text) => {
+    setXrCommandText(text);
+  });
+
+  onListenStateChange((state) => {
+    if (state === 'listening') {
+      setXrStatusText('Listening… (release to transcribe)');
+    } else if (state === 'processing') {
+      setXrStatusText('Processing speech…');
+    } else {
+      setXrStatusText('Ready');
+    }
+  });
+
+  // Expose the latest gaze snapshot for commandBridge / XR HUD.
+  window.getGazeTarget = getLatestGazeTarget;
+  window.vrCamera = camera;
+
+  initCommandBridge({
+    getApiBaseUrl: () => window.getApiBaseUrl?.()
+      ?? `${window.location.protocol}//${window.location.hostname}:8000`,
+    setStatus: (msg, type) => window.updateStatus?.(msg, type),
+    camera,
+    getGazeTarget: getLatestGazeTarget,
+  });
+
+  initSttPhase1({
+    getApiBaseUrl: () => window.getApiBaseUrl?.()
+      ?? `${window.location.protocol}//${window.location.hostname}:8000`,
+    setStatus: (msg, type) => window.updateStatus?.(msg, type),
+  });
+
+  window.executeCommand = executeCommand;
+  window.clearCommand = clearCommand;
+  window.fillExample = fillExample;
+  window.getUserPosition = getUserPosition;
+  window.startListen = startListen;
+  window.stopListen = stopListen;
+  window.getDraftCommand = getDraftCommand;
+  window.getListenState = getListenState;
+  window.onDraftChange = onDraftChange;
+  window.onListenStateChange = onListenStateChange;
+
+  console.log('🎤 Command bridge + STT + XR controls ready');
+
   // Make sceneQuery globally accessible for agents
   window.sceneQuery = sceneQuery;
   window.loadedObjects = loadedObjects;
@@ -68,14 +174,20 @@ async function setupScene({ scene, camera, renderer, player, controllers }) {
 
   renderer.xr.addEventListener('sessionstart', async() =>{
     console.log('🥽 XR session started');
+    applyXrUserSpawn(player, camera);
+    const panel = document.getElementById('command-panel');
+    if (panel) panel.style.display = 'none';
     const session = renderer.xr.getSession();
     xrReferenceSpace = await session.requestReferenceSpace('local');
     startHeadTracking();
   });
 
-  renderer.xr.addEventListener('sessioned', () => {
+  renderer.xr.addEventListener('sessionend', () => {
     console.log('🥽 XR session ended');
     xrReferenceSpace = null;
+    restoreDesktopRig(player, camera);
+    const panel = document.getElementById('command-panel');
+    if (panel) panel.style.display = '';
   });
 
 }
@@ -286,7 +398,7 @@ function loadUserAvatar(camera){
   */
   
   // for lower render cost
-  const avatarGeometry = new THREE.SphereGeometry(0.02);
+  const avatarGeometry = new THREE.SphereGeometry(0.02 / 3);
   const avatarMaterial = new THREE.MeshStandardMaterial({ 
     color: 'green', 
     emissive: 0x440000, // glow effect
@@ -317,6 +429,12 @@ function onFrame(delta, time, { scene, camera, renderer, player, controllers }) 
       updateHeadTracking(frame, xrReferenceSpace);
     }
   }
+
+  // Head-gaze debug gizmo: raycast against scene content only (floor, walls,
+  // objects), excluding the avatar/controllers which are not in loadedObjects.
+  updateGazeGizmo(camera, Array.from(loadedObjects.values()));
+
+  updateXrControllerBindings({ renderer, controllers });
 }
 
 init(setupScene, onFrame);

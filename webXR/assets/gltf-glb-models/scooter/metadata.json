@@ -3,9 +3,9 @@
   "category": "vehicle",
   "subcategory": "personal_transport",
   "default_scale": {
-    "x": 0.008,
-    "y": 0.008,
-    "z": 0.008
+    "x": 0.024,
+    "y": 0.024,
+    "z": 0.024
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "medium"
   },
   "typical_dimensions": {
-    "width": 0.2,
-    "height": 0.3,
-    "depth": 0.4
+    "width": 0.6,
+    "height": 0.9,
+    "depth": 1.2
   },
   "default_rotation": {
     "x": 0,
@@ -29,13 +29,13 @@
   ],
   "description": "A personal scooter vehicle, decorative item (not rideable in this scene)",
   "collision": {
-    "width": 0.327,
-    "height": 0.352,
-    "depth": 0.143,
+    "width": 0.981,
+    "height": 1.056,
+    "depth": 0.429,
     "offset": {
-      "x": -0.022,
-      "y": 0.179,
-      "z": 0.006
+      "x": -0.066,
+      "y": 0.537,
+      "z": 0.018
     }
   }
 }

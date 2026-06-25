@@ -48,6 +48,10 @@ class Orchestrator:
         self.database = database
         self.verification_agent = verification_agent
         self.user_position = user_position
+        # Latest head-gaze snapshot (set per-request by main.py). Used by the
+        # LanguageAgent to ground spatial deixis ("there", "on that"). Defaults
+        # to an explicit "none" so downstream code always sees a valid shape.
+        self.gaze = {"type": "none"}
         self.conversation_manager = conversation_manager
 
         # This stores the conversation history of the current session
@@ -187,7 +191,8 @@ class Orchestrator:
         recent_context = self._get_recent_context(session_id)
         parsed_command = self.language_agent.parse_prompt(
             state["user_prompt"],
-            context_history = recent_context
+            context_history = recent_context,
+            gaze = self.gaze,
             )
 
         if not parsed_command:

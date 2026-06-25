@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "surface",
   "default_scale": {
-    "x": 0.6,
-    "y": 0.6,
-    "z": 0.6
+    "x": 1.8,
+    "y": 1.8,
+    "z": 1.8
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "heavy"
   },
   "typical_dimensions": {
-    "width": 1.2,
-    "height": 0.75,
-    "depth": 0.6
+    "width": 3.6,
+    "height": 2.25,
+    "depth": 1.8
   },
   "default_rotation": {
     "x": 0,
@@ -31,13 +31,13 @@
   ],
   "description": "A smaller cabinet that can put a plant or vase, typically beside desk or bed",
   "collision": {
-    "width": 0.16,
-    "height": 0.158,
-    "depth": 0.13,
+    "width": 0.48,
+    "height": 0.474,
+    "depth": 0.39,
     "offset": {
-      "x": 0.074,
-      "y": 0.079,
-      "z": -0.058
+      "x": 0.222,
+      "y": 0.237,
+      "z": -0.174
     }
   }
 }

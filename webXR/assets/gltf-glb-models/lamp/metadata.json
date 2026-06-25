@@ -3,9 +3,9 @@
   "category": "furniture",
   "subcategory": "lighting",
   "default_scale": {
-    "x": 0.025,
-    "y": 0.025,
-    "z": 0.025
+    "x": 0.075,
+    "y": 0.075,
+    "z": 0.075
   },
   "properties": {
     "movable": true,
@@ -14,9 +14,9 @@
     "weight": "light"
   },
   "typical_dimensions": {
-    "width": 0.1,
-    "height": 0.4,
-    "depth": 0.1
+    "width": 0.3,
+    "height": 1.2,
+    "depth": 0.3
   },
   "default_rotation": {
     "x": 0,
@@ -30,13 +30,13 @@
   ],
   "description": "A table lamp that can be placed on surfaces and turned on/off",
   "collision": {
-    "width": 0.55,
-    "height": 0.831,
-    "depth": 0.545,
+    "width": 1.65,
+    "height": 2.493,
+    "depth": 1.635,
     "offset": {
-      "x": -0.103,
-      "y": 0.417,
-      "z": 0.147
+      "x": -0.309,
+      "y": 1.251,
+      "z": 0.441
     }
   }
 }
