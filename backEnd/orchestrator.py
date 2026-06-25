@@ -314,7 +314,8 @@ class Orchestrator:
                 {
                     "id": obj["id"],
                     "name": obj["name"],
-                    "category": obj["category"]
+                    "category": obj["category"],
+                    "collision": obj.get("collision"),
                 }
                 for obj in new_objects
             ]
