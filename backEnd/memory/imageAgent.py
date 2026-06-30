@@ -186,12 +186,23 @@ class ImageAgent:
             response = self.model.generate_content(
                 contents,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=500,
+                    temperature=0,
+                    max_output_tokens=2000,
                     response_mime_type="application/json"
-                )
+                ),
+                stream=False
             )
-            parsed = self._safe_parse_json(response.text, "node_enumeration")
+
+            # Use parts[0].text instead of response.text (SDK shorthand is lossy)
+            raw = response.candidates[0].content.parts[0].text.strip()
+
+            # Only repair if JSON is actually incomplete (unbalanced braces)
+            open_braces = raw.count("{")
+            close_braces = raw.count("}")
+            if open_braces > close_braces:
+                raw += "\n}" * (open_braces - close_braces)
+
+            parsed = self._safe_parse_json(raw, "node_enumeration")
             return parsed.get("nodes") if parsed else None
 
         except Exception as e:
@@ -384,7 +395,7 @@ class ImageAgent:
 if __name__ == "__main__":
     agent = ImageAgent()
 
-    for room in ["office"]:
+    for room in ["bedroom"]:
         print(f"\n{'='*60}")
         print(f"TEST: extract_semantic_layout('{room}')")
         print("="*60)
