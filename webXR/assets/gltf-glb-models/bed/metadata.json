@@ -1,7 +1,7 @@
 {
-  "name": "electrical piano",
+  "name": "bed",
   "category": "furniture",
-  "subcategory": "musical instrument",
+  "subcategory": "rest",
   "default_scale": {
     "x": 0.3333333333333333,
     "y": 0.3333333333333333,
@@ -10,7 +10,7 @@
   "properties": {
     "movable": true,
     "interactive": true,
-    "canSitOn": true,
+    "canSitOn": false,
     "weight": "heavy"
   },
   "typical_dimensions": {
@@ -24,18 +24,18 @@
     "z": 0
   },
   "aliases": [
-    "musical instrument",
-    "piano"
+    "small bed",
+    "single bed"
   ],
-  "description": "A musical instrument user can play with",
+  "description": "A furniture for person to sleep on",
   "collision": {
-    "width": 0.316,
-    "height": 0.229,
-    "depth": 0.183,
+    "width": 0.372,
+    "height": 0.208,
+    "depth": 0.738,
     "offset": {
-      "x": -0.002,
-      "y": 0.114,
-      "z": 0.032
+      "x": -0.001,
+      "y": 0.104,
+      "z": -0.0
     }
   }
 }
