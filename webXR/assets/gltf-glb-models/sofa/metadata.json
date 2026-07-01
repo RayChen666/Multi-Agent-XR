@@ -29,13 +29,13 @@
   ],
   "description": "A regular sofa that people can lay or seat on it to have a rest",
   "collision": {
-    "width": 2.649,
-    "height": 0.69,
-    "depth": 0.783,
+    "width": 2.648,
+    "height": 0.691,
+    "depth": 0.784,
     "offset": {
-      "x": -0.003,
-      "y": 0.351,
-      "z": -0.0
+      "x": -0.002,
+      "y": 0.35,
+      "z": -0.001
     }
   }
 }

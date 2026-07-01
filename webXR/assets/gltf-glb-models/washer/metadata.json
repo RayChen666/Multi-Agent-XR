@@ -1,0 +1,42 @@
+{
+  "name": "washer",
+  "category": "furniture",
+  "subcategory": "cleaning",
+  "default_scale": {
+    "x": 1,
+    "y": 1,
+    "z": 1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "washing machine",
+    "cloth washer",
+    "cloth cleaning"
+  ],
+  "description": "A machine to wash clothes",
+  "collision": {
+    "width": 0.599,
+    "height": 0.857,
+    "depth": 0.529,
+    "offset": {
+      "x": 0.0,
+      "y": 0.428,
+      "z": 0.011
+    }
+  }
+}

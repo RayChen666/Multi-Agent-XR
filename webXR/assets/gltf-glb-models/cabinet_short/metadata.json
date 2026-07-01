@@ -31,13 +31,13 @@
   ],
   "description": "A smaller cabinet that can put a plant or vase, typically beside desk or bed",
   "collision": {
-    "width": 0.48,
+    "width": 0.479,
     "height": 0.474,
-    "depth": 0.39,
+    "depth": 0.391,
     "offset": {
-      "x": 0.222,
+      "x": 0.221,
       "y": 0.237,
-      "z": -0.174
+      "z": -0.173
     }
   }
 }

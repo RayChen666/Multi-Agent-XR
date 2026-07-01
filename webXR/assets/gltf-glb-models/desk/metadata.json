@@ -31,13 +31,13 @@
   ],
   "description": "A standard office desk suitable for use with a chair, typically placed against a wall",
   "collision": {
-    "width": 1.323,
-    "height": 0.693,
-    "depth": 0.705,
+    "width": 1.322,
+    "height": 0.692,
+    "depth": 0.706,
     "offset": {
-      "x": 0.642,
-      "y": 0.345,
-      "z": -0.33
+      "x": 0.643,
+      "y": 0.346,
+      "z": -0.331
     }
   }
 }

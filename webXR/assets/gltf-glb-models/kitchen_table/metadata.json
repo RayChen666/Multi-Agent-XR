@@ -1,0 +1,41 @@
+{
+  "name": "kitchen table",
+  "category": "furniture",
+  "subcategory": "kitchen",
+  "default_scale": {
+    "x": 1,
+    "y": 2.4,
+    "z": 1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "table in the kitchen",
+    "dining table"
+  ],
+  "description": "A table in the kitchen for dining",
+  "collision": {
+    "width": 1.718,
+    "height": 0.708,
+    "depth": 1.034,
+    "offset": {
+      "x": -0.0,
+      "y": 0.354,
+      "z": -0.009
+    }
+  }
+}

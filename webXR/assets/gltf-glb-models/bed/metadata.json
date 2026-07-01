@@ -1,0 +1,41 @@
+{
+  "name": "bed",
+  "category": "furniture",
+  "subcategory": "rest",
+  "default_scale": {
+    "x": 1,
+    "y": 1,
+    "z": 1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "small bed",
+    "single bed"
+  ],
+  "description": "A furniture for person to sleep on",
+  "collision": {
+    "width": 1.115,
+    "height": 0.623,
+    "depth": 2.213,
+    "offset": {
+      "x": -0.004,
+      "y": 0.311,
+      "z": -0.0
+    }
+  }
+}

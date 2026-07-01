@@ -29,13 +29,13 @@
   ],
   "description": "A standard ergonomic chair suitable for seating beside desks",
   "collision": {
-    "width": 0.501,
-    "height": 0.912,
+    "width": 0.502,
+    "height": 0.911,
     "depth": 0.471,
     "offset": {
-      "x": 0.252,
+      "x": 0.251,
       "y": 0.456,
-      "z": -0.237
+      "z": -0.236
     }
   }
 }

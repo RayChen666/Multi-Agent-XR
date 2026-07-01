@@ -29,13 +29,13 @@
   ],
   "description": "A standard dining chair suitable for seating at tables",
   "collision": {
-    "width": 0.903,
-    "height": 1.02,
-    "depth": 0.162,
+    "width": 0.902,
+    "height": 1.021,
+    "depth": 0.163,
     "offset": {
       "x": -0.0,
-      "y": 0.06,
-      "z": 0.006
+      "y": 0.059,
+      "z": 0.005
     }
   }
 }

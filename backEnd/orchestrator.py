@@ -175,7 +175,8 @@ class Orchestrator:
             return "increment_iteration"
         
         print(f"Max retries reached - giving up")
-        #state["error_message"] = "Max retries reached due to collisions"
+        state["error_message"] = "Unable to perform action: movement causes a collision with existing objects"
+        state["success"] = False
         return "end"                                                  
 
     def _parse_and_decide(self, state: MASState) -> MASState:
@@ -318,7 +319,8 @@ class Orchestrator:
                 {
                     "id": obj["id"],
                     "name": obj["name"],
-                    "category": obj["category"]
+                    "category": obj["category"],
+                    "collision": obj.get("collision"),
                 }
                 for obj in new_objects
             ]
@@ -609,22 +611,28 @@ class Orchestrator:
             return state
 
         # POS/ROTATE — schema check then AABB against existing scene
-        is_valid = self.verification_agent.validate_transformation(proposed_placement)
-
-        if not is_valid:
-            print("Invalid transformation format")
-            state["verification_result"] = {
-                "has_collision": False,
-                "valid": False,
-                "message": "Invalid format"
-            }
-            state["collision_info"] = None
-            return state
-
-        # build proposed object list from transformation
         if "objects" in proposed_placement:
             moved_objects = proposed_placement["objects"]
+            for t in moved_objects:
+                if not self.verification_agent.validate_transformation(t):
+                    print("Invalid transformation format")
+                    state["verification_result"] = {
+                        "has_collision": False,
+                        "valid": False,
+                        "message": "Invalid format"
+                    }
+                    state["collision_info"] = None
+                    return state
         else:
+            if not self.verification_agent.validate_transformation(proposed_placement):
+                print("Invalid transformation format")
+                state["verification_result"] = {
+                    "has_collision": False,
+                    "valid": False,
+                    "message": "Invalid format"
+                }
+                state["collision_info"] = None
+                return state
             moved_objects = [proposed_placement]
 
         # get full object data for each moved object (needs collision dims)

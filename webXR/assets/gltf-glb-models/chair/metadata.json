@@ -25,16 +25,16 @@
   },
   "aliases": [
     "seat",
-    "dining chair"
+    "office chair"
   ],
-  "description": "A standard dining chair suitable for seating at tables",
+  "description": "A standard chair suitable for seating at tables",
   "collision": {
-    "width": 0.519,
+    "width": 0.52,
     "height": 0.813,
-    "depth": 0.525,
+    "depth": 0.524,
     "offset": {
       "x": 0.0,
-      "y": 0.408,
+      "y": 0.407,
       "z": 0.0
     }
   }

@@ -30,13 +30,13 @@
   ],
   "description": "A table lamp that can be placed on surfaces and turned on/off",
   "collision": {
-    "width": 1.65,
-    "height": 2.493,
-    "depth": 1.635,
+    "width": 1.651,
+    "height": 2.492,
+    "depth": 1.636,
     "offset": {
-      "x": -0.309,
+      "x": -0.308,
       "y": 1.251,
-      "z": 0.441
+      "z": 0.44
     }
   }
 }

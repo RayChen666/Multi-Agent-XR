@@ -1,0 +1,42 @@
+{
+  "name": "kitchen sink",
+  "category": "furniture",
+  "subcategory": "cleaning",
+  "default_scale": {
+    "x": 1,
+    "y": 1,
+    "z": 1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "sink",
+    "food wash",
+    "hand cleaning"
+  ],
+  "description": "A machine in kitchen to clean hands or wash foods",
+  "collision": {
+    "width": 1.083,
+    "height": 1.709,
+    "depth": 0.957,
+    "offset": {
+      "x": 0.012,
+      "y": 0.854,
+      "z": -0.001
+    }
+  }
+}

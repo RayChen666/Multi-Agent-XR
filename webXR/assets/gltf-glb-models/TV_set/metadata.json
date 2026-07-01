@@ -27,17 +27,18 @@
     "theater",
     "TV",
     "home theater",
-    "TV and speakers set"
+    "TV and speakers set",
+    "TV stand"
   ],
   "description": "A set of funitures that people can watch shows and movies",
   "collision": {
-    "width": 2.157,
-    "height": 1.419,
-    "depth": 1.551,
+    "width": 3.036,
+    "height": 1.694,
+    "depth": 0.42,
     "offset": {
-      "x": -0.0,
-      "y": 0.366,
-      "z": 0.0
+      "x": 0.02,
+      "y": 0.846,
+      "z": 0.04
     }
   }
 }

@@ -30,12 +30,12 @@
   ],
   "description": "A simple wooden stool for seating, compact and lightweight",
   "collision": {
-    "width": 0.363,
-    "height": 0.543,
-    "depth": 0.363,
+    "width": 0.364,
+    "height": 0.542,
+    "depth": 0.364,
     "offset": {
       "x": 0.0,
-      "y": 0.27,
+      "y": 0.271,
       "z": 0.0
     }
   }

@@ -234,8 +234,19 @@ async def process_natural_language_command(request: CommandRequest):
                     or "Need clarification to resolve remove intent. Please be more specific.",
                 )
 
+            collision_info = last_state.get("collision_info") if isinstance(last_state, dict) else None
+            if collision_info:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "type": "collision",
+                        "message": error_message or "Unable to perform action: object would collide with existing objects",
+                        "colliding_pairs": collision_info.get("colliding_pairs", []),
+                    }
+                )
+
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=error_message or "Failed to execute command"
             )
         

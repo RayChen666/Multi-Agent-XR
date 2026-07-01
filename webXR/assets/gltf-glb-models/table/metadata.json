@@ -24,16 +24,16 @@
     "z": 0
   },
   "aliases": [
-    "dining table"
+    "regular table"
   ],
-  "description": "A standard table with a flat surface suitable for placing objects or dining",
+  "description": "A standard table with a flat surface suitable for placing objects or seating around",
   "collision": {
     "width": 1.848,
-    "height": 0.705,
+    "height": 0.704,
     "depth": 1.848,
     "offset": {
       "x": 0.0,
-      "y": 0.351,
+      "y": 0.352,
       "z": 0.0
     }
   }

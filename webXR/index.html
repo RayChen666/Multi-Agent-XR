@@ -129,6 +129,12 @@
 				color: #ff9800;
 				border-left: 3px solid #ff9800;
 			}
+
+			#status.warning {
+				background: rgba(255, 213, 79, 0.2);
+				color: #ffd54f;
+				border-left: 3px solid #ffd54f;
+			}
 			
 			.examples {
 				margin-top: 15px;
@@ -235,8 +241,73 @@
 			window.getApiBaseUrl = function () {
 				return `${window.location.protocol}//${window.location.hostname}:8000`;
 			};
-			console.log('🔧 API URL:', window.getApiBaseUrl());
+			const API_BASE_URL = window.getApiBaseUrl();
+			console.log('🔧 API URL:', API_BASE_URL);
 
+			async function executeCommand() {
+				const input = document.getElementById('command-input');
+				const statusDiv = document.getElementById('status');
+				const command = input.value.trim();
+				
+				if (!command) {
+					updateStatus('Please enter a command', 'error');
+					return;
+				}
+				
+				// Show processing state
+				updateStatus(`⏳ Processing: "${command}"...`, 'processing');
+				
+				try {
+					const response = await fetch(`${API_BASE_URL}/scene/command`, {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify({
+							command: command,
+							user_position: getUserPosition()
+						})
+					});
+					
+					const result = await response.json();
+					
+					if (response.ok && result.status === 'success') {
+						updateStatus(`✅ Success: ${command}`, 'success');
+						input.value = '';  // Clear input on success
+					} else {
+						const detail = result.detail;
+						if (detail && typeof detail === 'object' && detail.type === 'collision') {
+							let msg = detail.message || 'Unable to perform action due to collision';
+							if (detail.colliding_pairs?.length) {
+								const pairs = detail.colliding_pairs
+									.map(p => `${p.mover} ↔ ${p.anchor}`)
+									.join(', ');
+								msg += ` (${pairs})`;
+							}
+							updateStatus(`⚠️ ${msg}`, 'warning');
+						} else {
+							const errorMsg = (typeof detail === 'string' ? detail : detail?.message) || result.message || 'Unknown error';
+							updateStatus(`❌ Failed: ${errorMsg}`, 'error');
+						}
+					}
+					
+				} catch (error) {
+					console.error('Command execution error:', error);
+					updateStatus(`❌ Error: ${error.message}`, 'error');
+				}
+			}
+			
+			function clearCommand() {
+				document.getElementById('command-input').value = '';
+				document.getElementById('status').className = '';
+				document.getElementById('status').textContent = '';
+			}
+			
+			function fillExample(command) {
+				document.getElementById('command-input').value = command;
+				document.getElementById('command-input').focus();
+			}
+			
 			function updateStatus(message, type) {
 				const statusDiv = document.getElementById('status');
 				statusDiv.textContent = message;

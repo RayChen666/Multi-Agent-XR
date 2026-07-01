@@ -1,0 +1,42 @@
+{
+  "name": "fridge",
+  "category": "furniture",
+  "subcategory": "kitchen",
+  "default_scale": {
+    "x": 1,
+    "y": 1,
+    "z": 1
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "food storage machine",
+    "storing food",
+    "refrigerator"
+  ],
+  "description": "A machine to keep food cool",
+  "collision": {
+    "width": 0.692,
+    "height": 1.918,
+    "depth": 0.722,
+    "offset": {
+      "x": -0.0,
+      "y": 0.959,
+      "z": 0.055
+    }
+  }
+}

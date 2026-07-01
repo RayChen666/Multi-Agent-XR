@@ -29,13 +29,13 @@
   ],
   "description": "A musical instrument user can play with",
   "collision": {
-    "width": 1.35,
-    "height": 0.978,
-    "depth": 0.504,
+    "width": 0.948,
+    "height": 0.686,
+    "depth": 0.549,
     "offset": {
-      "x": 0.003,
-      "y": -0.429,
-      "z": 0.015
+      "x": -0.006,
+      "y": 0.343,
+      "z": 0.095
     }
   }
 }

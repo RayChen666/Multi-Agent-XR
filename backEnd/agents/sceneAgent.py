@@ -3,11 +3,14 @@ import json
 import os
 import math
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from pathlib import Path
-import math
-import re
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.gridLayout import grid_layout_positions
+from tools.aroundPlacement import around_placement_positions
+from tools.facingPlacement import facing_placement
 
 class SceneAgent:
     """
@@ -97,7 +100,7 @@ class SceneAgent:
         if feedback:
             print(f"   Iteration with feedback: {feedback.get('suggestion', 'N/A')}")
 
-        return self._llm_spatial_reasoning(
+        result = self._llm_spatial_reasoning(
             parsed_command,
             scene_state,
             user_position,
@@ -107,6 +110,7 @@ class SceneAgent:
             room_bounds,
             anchor_object,
         )
+        return self._apply_facing_rotation(result, parsed_command, scene_state)
     
     def _compute_rotation(self,
                       parsed_command: Dict,
@@ -505,7 +509,8 @@ class SceneAgent:
         for obj in scene_objects:
             name = str(obj.get("name", "")).lower()
             category = str(obj.get("category", "")).lower()
-            if obj_type in name or obj_type == category:
+            obj_id = str(obj.get("id", "")).lower()
+            if obj_type in name or obj_type == category or obj_type == obj_id:
                 matches.append(obj)
 
         return matches
@@ -718,6 +723,231 @@ Rules:
             return {"candidate_ids": [], "confidence": None, "reasoning": ""}
 
     
+    def _apply_facing_rotation(self, result: Dict, parsed_command: Dict, scene_state: Dict) -> Dict:
+        """
+        Post-process any placement result: if a 'facing X' target is detected,
+        recompute each object's rotation_y from its final position toward the target.
+        This ensures the facing constraint survives collision-avoidance retries where
+        the LLM repositions the object but drops the rotation.
+        """
+        if not result:
+            return result
+        target = self._detect_facing_target(parsed_command, scene_state)
+        if not target:
+            return result
+
+        tx = float(target.get('position', {}).get('x', 0))
+        tz = float(target.get('position', {}).get('z', 0))
+
+        def _rot(px, pz) -> Dict:
+            return {'x': 0, 'y': round(math.atan2(tx - float(px), tz - float(pz)), 4), 'z': 0}
+
+        if 'objects' in result:
+            for obj in result['objects']:
+                pos = obj.get('position', {})
+                obj['rotation'] = _rot(pos.get('x', 0), pos.get('z', 0))
+        elif 'position' in result:
+            pos = result.get('position', {})
+            result['rotation'] = _rot(pos.get('x', 0), pos.get('z', 0))
+
+        return result
+
+    def _detect_facing_target(self, parsed_command: Dict, scene_state: Dict) -> Optional[Dict]:
+        """Return the scene object that 'facing X' refers to, or None."""
+        prompt = parsed_command.get('original_prompt', '').lower()
+        concepts = ' '.join(parsed_command.get('spatial_concepts', [])).lower()
+        text = prompt + ' ' + concepts
+
+        m = re.search(r'(?:facing|to\s+face|faces?)\s+(?:the\s+)?(\w+)', text)
+        if not m:
+            return None
+
+        target_type = m.group(1).lower()
+        if target_type.endswith('s') and not target_type.endswith('ss') and len(target_type) > 2:
+            target_type = target_type[:-1]
+
+        for obj in scene_state.get('objects', []):
+            name = obj.get('name', '').lower()
+            cat = obj.get('category', '').lower()
+            oid = obj.get('id', '').lower()
+            if target_type in name or target_type == cat or target_type == oid:
+                return obj
+
+        return None
+
+    def _try_facing_placement(
+        self,
+        parsed_command: Dict,
+        scene_state: Dict,
+        room_bounds: Optional[Dict],
+        new_objects_to_position: Optional[List[Dict]],
+    ) -> Optional[Dict]:
+        """Deterministic facing-placement. Returns result dict or None if not applicable."""
+        target = self._detect_facing_target(parsed_command, scene_state)
+        if not target:
+            return None
+
+        target_id = target.get('id')
+
+        if new_objects_to_position:
+            movers = new_objects_to_position
+        else:
+            involved = parsed_command.get('involved_objects', [])
+            movers = []
+            seen: set = set()
+            for token in involved:
+                t = token.lower()
+                if t.endswith('s') and not t.endswith('ss') and len(t) > 2:
+                    t = t[:-1]
+                for obj in scene_state.get('objects', []):
+                    oid = obj.get('id')
+                    if oid in seen or oid == target_id:
+                        continue
+                    name = obj.get('name', '').lower()
+                    cat = obj.get('category', '').lower()
+                    obj_id = str(oid).lower()
+                    if t in name or t == cat or t == obj_id:
+                        movers.append(obj)
+                        seen.add(oid)
+
+        if not movers:
+            return None
+
+        target_name = target.get('name', target_id)
+        is_add = bool(new_objects_to_position)
+        tx = float(target.get('position', {}).get('x', 0))
+        tz = float(target.get('position', {}).get('z', 0))
+        objects_out = []
+
+        for obj in movers:
+            if is_add:
+                # New object: place in front of target then face it
+                pos = facing_placement(
+                    target=target,
+                    mover_collision=obj.get('collision'),
+                    room_bounds=room_bounds,
+                )
+                objects_out.append({
+                    'object_id': obj['id'],
+                    'name': obj.get('name', ''),
+                    'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
+                    'rotation': {'x': 0, 'y': pos['rotation_y'], 'z': 0},
+                    'action': 'place',
+                })
+            else:
+                # Existing object: keep current position, only update rotation
+                cur_pos = obj.get('position', {})
+                px = float(cur_pos.get('x', 0))
+                pz = float(cur_pos.get('z', 0))
+                rotation_y = math.atan2(tx - px, tz - pz)
+                objects_out.append({
+                    'object_id': obj['id'],
+                    'name': obj.get('name', ''),
+                    'position': cur_pos,
+                    'rotation': {'x': 0, 'y': round(rotation_y, 4), 'z': 0},
+                    'action': 'rotate',
+                })
+
+        print(f"   Using deterministic facing-placement: {len(movers)} objects facing '{target_name}'")
+        reasoning = f"{'Placed' if is_add else 'Rotated'} facing {target_name}"
+        if len(objects_out) == 1:
+            result = objects_out[0]
+            result['reasoning'] = reasoning
+            return result
+        return {'objects': objects_out, 'reasoning': reasoning}
+
+    def _detect_around_anchor(self, parsed_command: Dict, scene_state: Dict) -> Optional[Dict]:
+        """Return the scene object that 'around X' refers to, or None."""
+        prompt = parsed_command.get('original_prompt', '').lower()
+        concepts = ' '.join(parsed_command.get('spatial_concepts', [])).lower()
+        text = prompt + ' ' + concepts
+
+        if 'around' not in text:
+            return None
+
+        m = re.search(r'around\s+(?:the\s+)?(\w+)', text)
+        if not m:
+            return None
+
+        anchor_type = m.group(1).lower()
+        if anchor_type.endswith('s') and not anchor_type.endswith('ss') and len(anchor_type) > 2:
+            anchor_type = anchor_type[:-1]
+
+        for obj in scene_state.get('objects', []):
+            name = obj.get('name', '').lower()
+            cat = obj.get('category', '').lower()
+            oid = obj.get('id', '').lower()
+            if anchor_type in name or anchor_type == cat or anchor_type == oid:
+                return obj
+
+        return None
+
+    def _try_around_placement(
+        self,
+        parsed_command: Dict,
+        scene_state: Dict,
+        room_bounds: Optional[Dict],
+        new_objects_to_position: Optional[List[Dict]],
+    ) -> Optional[Dict]:
+        """
+        Deterministic around-placement. Returns result dict or None if not applicable.
+        Only runs on the first attempt (no feedback) because positions are always identical.
+        """
+        anchor = self._detect_around_anchor(parsed_command, scene_state)
+        if not anchor:
+            return None
+
+        anchor_id = anchor.get('id')
+
+        if new_objects_to_position:
+            movers = new_objects_to_position
+        else:
+            involved = parsed_command.get('involved_objects', [])
+            movers = []
+            seen: set = set()
+            for token in involved:
+                t = token.lower()
+                if t.endswith('s') and not t.endswith('ss') and len(t) > 2:
+                    t = t[:-1]
+                for obj in scene_state.get('objects', []):
+                    oid = obj.get('id')
+                    if oid in seen or oid == anchor_id:
+                        continue
+                    name = obj.get('name', '').lower()
+                    cat = obj.get('category', '').lower()
+                    obj_id = str(oid).lower()
+                    if t in name or t == cat or t == obj_id:
+                        movers.append(obj)
+                        seen.add(oid)
+
+        if not movers:
+            return None
+
+        positions = around_placement_positions(movers, anchor, room_bounds)
+        if not positions:
+            return None
+
+        is_add = bool(new_objects_to_position)
+        objects_out = []
+        for obj, pos in zip(movers, positions):
+            objects_out.append({
+                'object_id': obj['id'],
+                'name': obj.get('name', ''),
+                'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
+                'rotation': {'x': 0, 'y': pos['rotation_y'], 'z': 0},
+                'action': 'place' if is_add else 'move',
+            })
+
+        anchor_name = anchor.get('name', anchor_id)
+        print(f"   Using deterministic around-placement: {len(movers)} objects around '{anchor_name}'")
+        return {
+            'objects': objects_out,
+            'reasoning': f"Arranged {len(movers)} objects evenly around {anchor_name}",
+        }
+
+    def _grid_layout_positions(self, objects: List[Dict], room_bounds: Dict, gap: float = 0.15) -> List[Dict]:
+        return grid_layout_positions(objects, room_bounds, gap)
+
     def _build_gaze_target_context(self, resolved_spatial_target: Optional[Dict]) -> str:
         """
         Turn the LanguageAgent's gaze-resolved deictic target into an
@@ -778,6 +1008,40 @@ Rules:
                                anchor_object: Optional[str] = None,
                                ) -> Dict:
 
+        # Deterministic spatial shortcuts (first attempt only — positions are always identical).
+        if not feedback:
+            facing_result = self._try_facing_placement(
+                parsed_command, scene_state, room_bounds, new_objects_to_position
+            )
+            if facing_result:
+                return facing_result
+
+            around_result = self._try_around_placement(
+                parsed_command, scene_state, room_bounds, new_objects_to_position
+            )
+            if around_result:
+                return around_result
+
+        # If feedback exists and every collision pair is between proposed objects,
+        # the LLM has already failed to solve the layout numerically — use deterministic grid.
+        if feedback and new_objects_to_position and room_bounds:
+            pairs = feedback.get('colliding_pairs', [])
+            new_ids = {o['id'] for o in new_objects_to_position}
+            if pairs and all(p.get('mover') in new_ids and p.get('anchor') in new_ids for p in pairs):
+                grid_positions = self._grid_layout_positions(new_objects_to_position, room_bounds)
+                if grid_positions:
+                    print(f"   Using deterministic grid layout for {len(new_objects_to_position)} objects (LLM failed proposed-vs-proposed constraints)")
+                    objects_out = []
+                    for obj, pos in zip(new_objects_to_position, grid_positions):
+                        objects_out.append({
+                            'object_id': obj['id'],
+                            'name': obj['name'],
+                            'position': pos,
+                            'rotation': {'x': 0, 'y': 0, 'z': 0},
+                            'action': 'add',
+                        })
+                    return {'objects': objects_out}
+
         # LLM context
         scene_objects = [
             {
@@ -791,22 +1055,35 @@ Rules:
         ]
         new_objects_section = ""
         if new_objects_to_position:
-            new_objects_info = [
-                {
+            new_objects_info = []
+            for obj in new_objects_to_position:
+                entry = {
                     'id': obj['id'],
                     'name': obj['name'],
                     'category': obj.get('category', 'unknown'),
-                    'properties': obj.get('properties', {})
+                    'properties': obj.get('properties', {}),
                 }
-                for obj in new_objects_to_position
-            ]
+                col = obj.get('collision')
+                if col and isinstance(col, dict):
+                    w = col.get('width', 0)
+                    d = col.get('depth', 0)
+                    entry['collision_footprint'] = {
+                        'width_x': round(w, 3),
+                        'depth_z': round(d, 3),
+                        'min_center_spacing_x': round(w + 0.1, 3),
+                        'min_center_spacing_z': round(d + 0.1, 3),
+                    }
+                new_objects_info.append(entry)
+
             new_objects_section = f"""
-            
+
             NEWLY CREATED OBJECTS (need position/rotation):
             {json.dumps(new_objects_info, indent=2)}
-            
+
             IMPORTANT: These objects have been created but have no position/rotation yet.
             You MUST provide position and rotation for ALL of these objects.
+            If collision_footprint is provided, use min_center_spacing_x/z to ensure
+            adjacent objects of the same type do not overlap each other.
             """
 
         # Extract key information from enriched Language Agent output
@@ -826,18 +1103,31 @@ Rules:
         feedback_context = ""
         if feedback:
             collision_pairs = feedback.get('colliding_pairs', [])
-            collision_lines = ""
+
+            # Use the pre-computed safe positions from aabbCheck (edge-based, exact).
+            # Deduplicate per anchor — all movers of the same size hitting the same anchor
+            # produce the same safe x/z boundaries, so one entry per anchor suffices.
+            seen_anchors: dict = {}  # anchor -> suggestion string
+            per_mover_lines = ""
             for pair in collision_pairs:
-                collision_lines += f"\n    - {pair.get('suggestion', 'Reposition to avoid overlap')}"
+                mover = pair.get('mover', '?')
+                anchor = pair.get('anchor', '?')
+                suggestion = pair.get('suggestion', '')
+                per_mover_lines += f"\n    - {suggestion}"
+                if anchor not in seen_anchors:
+                    seen_anchors[anchor] = suggestion
 
             feedback_context = f"""
-            
-            COLLISION DETECTED FROM PREVIOUS ATTEMPT:
-            {collision_lines}
-            
-            CRITICAL: You MUST use the safe positions listed above. 
-            Do NOT place the object at the same position as the previous attempt.
-            Pick a concrete safe x or z value from the ranges given.
+
+            ⚠️ COLLISION DETECTED — REQUIRED REPOSITIONING:
+            {per_mover_lines}
+
+            CRITICAL RULES:
+            - The safe x/z values above are computed from the actual bounding box edges — they are exact.
+            - Every object MUST be placed at one of the listed safe coordinates.
+            - Do NOT reason about whether a position "looks far enough" — trust the safe values.
+            - Do NOT reuse any position from the previous attempt.
+            - If placing multiple objects of the same type, ensure they also don't collide with each other.
             """
 
 
