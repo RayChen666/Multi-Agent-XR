@@ -150,6 +150,34 @@
     ]
   },
   "objects": [
+    {
+      "id": "door_01",
+      "name": "door",
+      "category": "furniture",
+      "subcategory": "door",
+      "modelPath": "assets/gltf-glb-models/door/door.glb",
+      "position": {
+        "x": 1,
+        "y": -3.0,
+        "z": -1.5
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      },
+      "properties": {
+        "movable": false,
+        "interactive": false,
+        "canPlaceOn": false,
+        "weight": "heavy"
+      }
+    }
 
 
     
