@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 REFERENCE_IMAGE_LIBRARY = {
     "office":       "reference_layouts/office.jpg",
     "bedroom":      "reference_layouts/bedroom.jpg",
+    "kitchen":      "reference_layouts/kitchen.jpg",
 }
 
 class ImageAgent:
@@ -356,7 +357,7 @@ class ImageAgent:
             response = self.model.generate_content(
                 contents,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
+                    temperature=0,
                     max_output_tokens=1500,
                     response_mime_type="application/json"
                 )
@@ -380,12 +381,21 @@ class ImageAgent:
             return json.loads(text)
         except json.JSONDecodeError:
             start = text.find("{")
-            end = text.rfind("}") + 1
-            if start != -1 and end > start:
-                try:
-                    return json.loads(text[start:end])
-                except json.JSONDecodeError as e:
-                    print(f"   JSON parse error in {label}: {e}")
+            if start != -1:
+                depth, end = 0, -1
+                for i, ch in enumerate(text[start:], start):
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                if end != -1:
+                    try:
+                        return json.loads(text[start:end])
+                    except json.JSONDecodeError as e:
+                        print(f"   JSON parse error in {label}: {e}")
             return None
 
 
@@ -395,7 +405,7 @@ class ImageAgent:
 if __name__ == "__main__":
     agent = ImageAgent()
 
-    for room in ["bedroom"]:
+    for room in ["kitchen"]:
         print(f"\n{'='*60}")
         print(f"TEST: extract_semantic_layout('{room}')")
         print("="*60)

@@ -1,0 +1,41 @@
+{
+  "name": "oven",
+  "category": "furniture",
+  "subcategory": "cooking",
+  "default_scale": {
+    "x": 0.3333333333333333,
+    "y": 0.3333333333333333,
+    "z": 0.3333333333333333
+  },
+  "properties": {
+    "movable": true,
+    "interactive": true,
+    "canSitOn": false,
+    "weight": "heavy"
+  },
+  "typical_dimensions": {
+    "width": 0.2,
+    "height": 0.5,
+    "depth": 0.2
+  },
+  "default_rotation": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "aliases": [
+    "cooking machine",
+    "kitchen oven"
+  ],
+  "description": "A machine to cook food",
+  "collision": {
+    "width": 0.869,
+    "height": 0.345,
+    "depth": 0.284,
+    "offset": {
+      "x": 0.005,
+      "y": 0.173,
+      "z": 0.002
+    }
+  }
+}

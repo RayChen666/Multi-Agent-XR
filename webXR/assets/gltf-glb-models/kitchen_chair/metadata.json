@@ -1,17 +1,17 @@
 {
-  "name": "chair",
+  "name": "kitchen chair",
   "category": "furniture",
   "subcategory": "seating",
   "default_scale": {
-    "x": 0.005,
-    "y": 0.005,
-    "z": 0.005
+    "x": 0.3333333333333333,
+    "y": 0.3333333333333333,
+    "z": 0.3333333333333333
   },
   "properties": {
     "movable": true,
     "interactive": true,
-    "canSitOn": true,
-    "weight": "light"
+    "canSitOn": false,
+    "weight": "heavy"
   },
   "typical_dimensions": {
     "width": 0.2,
@@ -24,18 +24,17 @@
     "z": 0
   },
   "aliases": [
-    "seat",
-    "office chair"
+    "dining chair"
   ],
-  "description": "A standard chair suitable for seating at tables",
+  "description": "A chair in kitchen or dining room",
   "collision": {
-    "width": 0.173,
-    "height": 0.271,
-    "depth": 0.175,
+    "width": 0.182,
+    "height": 0.276,
+    "depth": 0.178,
     "offset": {
-      "x": 0.0,
-      "y": 0.136,
-      "z": 0.0
+      "x": -0.0,
+      "y": 0.138,
+      "z": -0.016
     }
   }
 }

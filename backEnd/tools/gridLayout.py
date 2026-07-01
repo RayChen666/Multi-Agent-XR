@@ -19,9 +19,8 @@ def grid_layout_positions(objects: List[Dict], room_bounds: Dict, gap: float = 0
     if not objects or not room_bounds:
         return []
 
-    col = objects[0].get('collision') or {}
-    W = col.get('width', 0.4)
-    D = col.get('depth', 0.4)
+    W = max((obj.get('collision') or {}).get('width', 0.4) for obj in objects)
+    D = max((obj.get('collision') or {}).get('depth', 0.4) for obj in objects)
 
     wall_buf = 0.1
     min_x = room_bounds['min']['x'] + W / 2 + wall_buf
