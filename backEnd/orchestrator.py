@@ -312,8 +312,55 @@ class Orchestrator:
             new_objects = selected_assets.get("new_objects", [])
             if not new_objects:
                 new_objects = [selected_assets["new_object"]]
-            
+
             print(f"   Positioning {len(new_objects)} new object(s)")
+
+            # Get feedback from previous iteration and determine which objects need
+            # repositioning. On retry, only reposition the objects involved in the
+            # detected collision; non-colliding objects keep their previous positions.
+            feedback = None
+            preserved_objects = []
+            objects_to_position = new_objects
+
+            if state.get("iteration_count", 0) > 0:
+                collision_info = state.get("collision_info")
+                if collision_info:
+                    colliding_pairs = collision_info.get("colliding_pairs", [])
+                    feedback = {
+                        "previous_attempt": state.get("proposed_placement"),
+                        "colliding_pairs": colliding_pairs,
+                        "suggestion": collision_info.get("suggestion", "Try alternative placement")
+                    }
+
+                    # Collect every object ID that appears in any collision pair
+                    # (both sides are equally candidates for repositioning).
+                    colliding_ids = set()
+                    for pair in colliding_pairs:
+                        colliding_ids.update(
+                            oid for oid in (pair.get("mover"), pair.get("anchor")) if oid
+                        )
+
+                    if colliding_ids:
+                        prev_complete = (state.get("proposed_placement") or {}).get("complete_objects", [])
+                        prev_by_id = {obj["id"]: obj for obj in prev_complete}
+
+                        preserved_objects = [
+                            prev_by_id[obj["id"]]
+                            for obj in new_objects
+                            if obj["id"] not in colliding_ids and obj["id"] in prev_by_id
+                        ]
+                        objects_to_position = [
+                            obj for obj in new_objects
+                            if obj["id"] in colliding_ids
+                        ]
+
+                        # Safety: if filtering produced nothing to reposition, reset
+                        if not objects_to_position:
+                            objects_to_position = new_objects
+                            preserved_objects = []
+                        elif preserved_objects:
+                            print(f"   Preserving {len(preserved_objects)} non-colliding object(s), "
+                                  f"repositioning {len(objects_to_position)}")
 
             object_details = [
                 {
@@ -322,32 +369,8 @@ class Orchestrator:
                     "category": obj["category"],
                     "collision": obj.get("collision"),
                 }
-                for obj in new_objects
+                for obj in objects_to_position
             ]
-            
-            # Get feedback from previous iteration if any (for collision retry)
-            feedback = None
-            if state.get("iteration_count", 0) > 0:
-                collision_info = state.get("collision_info")
-                if collision_info:
-                    feedback = {
-                        "previous_attempt": state.get("proposed_placement"),
-                        #"collision_with": collision_info.get("colliding_objects", []),
-                        "colliding_pairs": collision_info.get("colliding_pairs", []),
-                        "suggestion": collision_info.get("suggestion", "Try alternative placement")
-                    }
-            
-            # Calculate position/rotation using Scene Agent
-
-            '''
-            spatial_updates = self.scene_agent.calculate_spatial_transformation(
-                parsed_command,
-                scene_state,
-                self.user_position,
-                new_objects_to_position=object_details, 
-                feedback=feedback
-            )
-            '''
 
             # now with the updated version we grab sceneGraph from memory context if the command route is complex/vague
             memory_context = state.get("memory_context")
@@ -357,8 +380,7 @@ class Orchestrator:
                 semantic_layout = memory_context.get("semantic_layout", {})
                 layout_graph = semantic_layout.get("layout_graph")
                 anchor_object = semantic_layout.get("anchor_object")
-                
-            
+
             spatial_updates = self.scene_agent.calculate_spatial_transformation(
                 parsed_command,
                 scene_state,
@@ -369,31 +391,35 @@ class Orchestrator:
                 room_bounds=room_bounds,
                 anchor_object=anchor_object,
             )
-            
+
             if not spatial_updates:
                 print("Failed to calculate spatial updates for new object")
                 state["success"] = False
                 state["error_message"] = "Spatial calculation failed"
                 return state
-            
+
             if "objects" in spatial_updates:
                 positioned_objects = spatial_updates["objects"]
             else:
-                # Single object format - wrap it
                 positioned_objects = [spatial_updates]
-            
-            complete_objects = []
-            for new_obj in new_objects:
-                # Find matching position data
+
+            # Preserved non-colliding objects carry their previous positions forward.
+            complete_objects = list(preserved_objects)
+            for obj in preserved_objects:
+                pos = obj.get("position", {})
+                print(f"   {obj['id']} preserved at ({pos.get('x', 0):.2f}, "
+                      f"{pos.get('y', 0):.2f}, {pos.get('z', 0):.2f})")
+
+            for new_obj in objects_to_position:
                 pos_data = next(
                     (p for p in positioned_objects if p.get("object_id") == new_obj["id"]),
                     None
                 )
-                
+
                 if pos_data:
                     base_position = pos_data.get("position")
                     y_offset = new_obj.get("y_offset", 0.0)
-                    
+
                     adjusted_position = {
                         "x": base_position["x"],
                         "y": base_position["y"] + y_offset,
@@ -401,7 +427,7 @@ class Orchestrator:
                     }
                     new_obj["position"] = adjusted_position
                     new_obj["rotation"] = pos_data.get("rotation")
-                    
+
                     if y_offset != 0.0:
                         print(f"   {new_obj['id']} positioned at ({adjusted_position['x']:.2f}, "
                             f"{adjusted_position['y']:.2f}, {adjusted_position['z']:.2f}) "
@@ -409,14 +435,14 @@ class Orchestrator:
                     else:
                         print(f"   {new_obj['id']} positioned at ({adjusted_position['x']:.2f}, "
                             f"{adjusted_position['y']:.2f}, {adjusted_position['z']:.2f})")
-                    
+
                     complete_objects.append(new_obj)
                 else:
                     print(f"   No position calculated for {new_obj['id']}")
-            
+
             state["proposed_placement"] = {
                 "action": "add_multiple" if len(complete_objects) > 1 else "add",
-                "complete_objects": complete_objects  # Array
+                "complete_objects": complete_objects
             }
 
         # CASE 2: normal placement action
