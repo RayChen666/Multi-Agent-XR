@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.gridLayout import grid_layout_positions
 from tools.aroundPlacement import around_placement_positions
 from tools.facingPlacement import facing_placement
+from tools.graphLayout import layout_graph_positions
 
 class SceneAgent:
     """
@@ -1021,6 +1022,32 @@ Rules:
             )
             if around_result:
                 return around_result
+
+            # Graph-layout resolver: converts ImageAgent layout_graph edges directly
+            # into collision-safe coordinates — no LLM needed for the complex route.
+            if layout_graph and new_objects_to_position and room_bounds:
+                graph_positions = layout_graph_positions(
+                    nodes_to_place=new_objects_to_position,
+                    edges=layout_graph.get('edges', []),
+                    anchor_object=anchor_object,
+                    room_bounds=room_bounds,
+                )
+                if graph_positions and len(graph_positions) == len(new_objects_to_position):
+                    print(f"   Using deterministic graph layout for {len(new_objects_to_position)} objects")
+                    objects_out = []
+                    for obj in new_objects_to_position:
+                        pos = graph_positions[obj['id']]
+                        objects_out.append({
+                            'object_id': obj['id'],
+                            'name': obj.get('name', ''),
+                            'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
+                            'rotation': {'x': 0, 'y': round(pos.get('rotation_y', 0.0), 4), 'z': 0},
+                            'action': 'place',
+                        })
+                    return {
+                        'objects': objects_out,
+                        'reasoning': 'Deterministic graph-layout resolved from ImageAgent layout_graph',
+                    }
 
         # If feedback exists and every collision pair is between proposed objects,
         # the LLM has already failed to solve the layout numerically — use deterministic grid.

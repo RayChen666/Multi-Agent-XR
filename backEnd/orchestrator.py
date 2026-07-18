@@ -368,6 +368,7 @@ class Orchestrator:
                     "name": obj["name"],
                     "category": obj["category"],
                     "collision": obj.get("collision"),
+                    "source_node": obj.get("source_node"),
                 }
                 for obj in objects_to_position
             ]

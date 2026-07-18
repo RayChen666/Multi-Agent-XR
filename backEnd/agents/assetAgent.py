@@ -349,8 +349,9 @@ class AssetAgent:
                 f"Please create metadata file for this asset."
             )
         new_object = self._create_from_known(matched_name)
+        new_object['source_node'] = object_name  # original graph node name before alias resolution
         self.pending_objects.append(new_object)
-    
+
         return new_object
         
     def _create_from_known(self, asset_name: str) -> Dict:
