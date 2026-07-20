@@ -405,7 +405,7 @@ class ImageAgent:
 if __name__ == "__main__":
     agent = ImageAgent()
 
-    for room in ["kitchen"]:
+    for room in ["office"]:
         print(f"\n{'='*60}")
         print(f"TEST: extract_semantic_layout('{room}')")
         print("="*60)
