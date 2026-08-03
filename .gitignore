@@ -6,12 +6,16 @@ backEnd/key.pem
 # Python bytecode / caches
 __pycache__/
 *.py[cod]
+*$py.class
 *.pyd
 
 # Common Python tooling caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
+.Python
 
 # macOS
 .DS_Store
+**/.DS_Store
