@@ -59,7 +59,7 @@ def build_aabb(obj):
 
       return mins, maxs
 
-def check_aabb_overlap(a_min, a_max, b_min, b_max, tolerance=0.05):
+def check_aabb_overlap(a_min, a_max, b_min, b_max, tolerance=0.1):
       for i in range(3):
             if a_max[i] <= b_min[i] + tolerance:
                   return False
@@ -97,7 +97,7 @@ def check_proposed_objects(proposed_objects, existing_objects) -> list:
 
             # compute safe positions from AABB edges (not anchor center)
             # so the mover's edge clears the anchor's edge by buf meters
-            buf = 0.1
+            buf = 0.05
             mover_half_w = obj_a['collision']['width'] / 2
             mover_half_d = obj_a['collision']['depth'] / 2
 

@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.gridLayout import grid_layout_positions
 from tools.aroundPlacement import around_placement_positions
 from tools.facingPlacement import facing_placement
+from tools.graphLayout import layout_graph_positions
+from tools.distancePlacement import distance_placement
 
 class SceneAgent:
     """
@@ -945,6 +947,137 @@ Rules:
             'reasoning': f"Arranged {len(movers)} objects evenly around {anchor_name}",
         }
 
+    def _detect_distance_constraint(self, parsed_command: Dict, scene_state: Dict) -> Optional[Dict]:
+        """
+        Parse 'N meters back/front/left/right of X' style commands, e.g.
+        "move the sink 1.5 meters back of the table". Returns
+        {'distance': float, 'direction': str, 'anchor': dict} or None.
+        """
+        prompt = parsed_command.get('original_prompt', '').lower()
+        concepts = ' '.join(parsed_command.get('spatial_concepts', [])).lower()
+        text = prompt + ' ' + concepts
+
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:meters?|metres?|m)\b\s*(?:to\s+the\s+)?'
+            r'(in front of|front of|back of|behind|left of|right of)\s+(?:the\s+)?(\w+)',
+            text,
+        )
+        if not m:
+            return None
+
+        distance = float(m.group(1))
+        direction_map = {
+            'in front of': 'front',
+            'front of': 'front',
+            'back of': 'back',
+            'behind': 'back',
+            'left of': 'left',
+            'right of': 'right',
+        }
+        direction = direction_map.get(m.group(2))
+        if not direction:
+            return None
+
+        anchor_type = m.group(3).lower()
+        if anchor_type.endswith('s') and not anchor_type.endswith('ss') and len(anchor_type) > 2:
+            anchor_type = anchor_type[:-1]
+
+        anchor = None
+        for obj in scene_state.get('objects', []):
+            name = obj.get('name', '').lower()
+            cat = obj.get('category', '').lower()
+            oid = obj.get('id', '').lower()
+            if anchor_type in name or anchor_type == cat or anchor_type == oid:
+                anchor = obj
+                break
+        if not anchor:
+            return None
+
+        return {'distance': distance, 'direction': direction, 'anchor': anchor}
+
+    def _try_distance_placement(
+        self,
+        parsed_command: Dict,
+        scene_state: Dict,
+        room_bounds: Optional[Dict],
+        new_objects_to_position: Optional[List[Dict]],
+    ) -> Optional[Dict]:
+        """
+        Deterministic edge-to-edge distance placement. Tracks the mover's and
+        anchor's bounding boxes (via tools.distancePlacement, which builds AABBs
+        from collision width/height/depth + offset) and solves for the position
+        where abs(bound_mover - bound_anchor) equals the requested distance.
+        Returns None if no distance constraint is detected in the command.
+        """
+        constraint = self._detect_distance_constraint(parsed_command, scene_state)
+        if not constraint:
+            return None
+
+        anchor = constraint['anchor']
+        anchor_id = anchor.get('id')
+
+        if new_objects_to_position:
+            movers = new_objects_to_position
+        else:
+            involved = parsed_command.get('involved_objects', [])
+            movers = []
+            seen: set = set()
+            for token in involved:
+                t = token.lower()
+                if t.endswith('s') and not t.endswith('ss') and len(t) > 2:
+                    t = t[:-1]
+                for obj in scene_state.get('objects', []):
+                    oid = obj.get('id')
+                    if oid in seen or oid == anchor_id:
+                        continue
+                    name = obj.get('name', '').lower()
+                    cat = obj.get('category', '').lower()
+                    obj_id = str(oid).lower()
+                    if t in name or t == cat or t == obj_id:
+                        movers.append(obj)
+                        seen.add(oid)
+
+        if not movers:
+            return None
+
+        is_add = bool(new_objects_to_position)
+        objects_out = []
+        for obj in movers:
+            try:
+                pos = distance_placement(
+                    mover=obj,
+                    anchor=anchor,
+                    distance=constraint['distance'],
+                    direction=constraint['direction'],
+                    room_bounds=room_bounds,
+                )
+            except ValueError as e:
+                print(f"   [DISTANCE] skipped {obj.get('id')}: {e}")
+                continue
+
+            rotation = {'x': 0, 'y': 0, 'z': 0} if is_add else obj.get('rotation', {'x': 0, 'y': 0, 'z': 0})
+            objects_out.append({
+                'object_id': obj['id'],
+                'name': obj.get('name', ''),
+                'position': pos,
+                'rotation': rotation,
+                'action': 'place' if is_add else 'move',
+            })
+
+        if not objects_out:
+            return None
+
+        anchor_name = anchor.get('name', anchor_id)
+        print(f"   Using deterministic distance-placement: {len(objects_out)} object(s) "
+              f"{constraint['distance']}m {constraint['direction']} of '{anchor_name}'")
+        reasoning = f"Placed {constraint['distance']}m {constraint['direction']} of {anchor_name} (edge-to-edge)"
+
+        if len(objects_out) == 1:
+            result = objects_out[0]
+            result['reasoning'] = reasoning
+            return result
+        return {'objects': objects_out, 'reasoning': reasoning}
+
     def _grid_layout_positions(self, objects: List[Dict], room_bounds: Dict, gap: float = 0.15) -> List[Dict]:
         return grid_layout_positions(objects, room_bounds, gap)
 
@@ -1010,6 +1143,12 @@ Rules:
 
         # Deterministic spatial shortcuts (first attempt only — positions are always identical).
         if not feedback:
+            distance_result = self._try_distance_placement(
+                parsed_command, scene_state, room_bounds, new_objects_to_position
+            )
+            if distance_result:
+                return distance_result
+
             facing_result = self._try_facing_placement(
                 parsed_command, scene_state, room_bounds, new_objects_to_position
             )
@@ -1021,6 +1160,32 @@ Rules:
             )
             if around_result:
                 return around_result
+
+            # Graph-layout resolver: converts ImageAgent layout_graph edges directly
+            # into collision-safe coordinates — no LLM needed for the complex route.
+            if layout_graph and new_objects_to_position and room_bounds:
+                graph_positions = layout_graph_positions(
+                    nodes_to_place=new_objects_to_position,
+                    edges=layout_graph.get('edges', []),
+                    anchor_object=anchor_object,
+                    room_bounds=room_bounds,
+                )
+                if graph_positions and len(graph_positions) == len(new_objects_to_position):
+                    print(f"   Using deterministic graph layout for {len(new_objects_to_position)} objects")
+                    objects_out = []
+                    for obj in new_objects_to_position:
+                        pos = graph_positions[obj['id']]
+                        objects_out.append({
+                            'object_id': obj['id'],
+                            'name': obj.get('name', ''),
+                            'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
+                            'rotation': {'x': 0, 'y': round(pos.get('rotation_y', 0.0), 4), 'z': 0},
+                            'action': 'place',
+                        })
+                    return {
+                        'objects': objects_out,
+                        'reasoning': 'Deterministic graph-layout resolved from ImageAgent layout_graph',
+                    }
 
         # If feedback exists and every collision pair is between proposed objects,
         # the LLM has already failed to solve the layout numerically — use deterministic grid.
