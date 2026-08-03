@@ -29,7 +29,7 @@ This tutorial teaches you how to navigate to the reseources and basic setup of t
 ## Generate Google Gemini API key
 
 1. **Go to website**:
-    https://aistudio.google.com/api-keys to create your own Gemini API key following the giudeline.
+    https://aistudio.google.com/api-keys to create your own Gemini API key following the guideline.
 
 2. **Navigate to root folder**: 
     - create *.env* file at root folder with one line code add to it:

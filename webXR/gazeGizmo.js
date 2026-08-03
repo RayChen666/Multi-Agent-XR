@@ -19,8 +19,8 @@ import * as THREE from 'three';
  */
 
 const MAX_GAZE_DISTANCE = 200; // meters; rays beyond this are treated as "no hit"
-const CONE_HEIGHT = 0.5;
-const CONE_RADIUS = 0.18;
+const CONE_HEIGHT = 0.25;
+const CONE_RADIUS = 0.09;
 const GIZMO_COLOR = 0xffff00;
 
 // Floor plane Y in world space (matches sceneData.json structure floor / bounds.min.y
