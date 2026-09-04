@@ -1,3 +1,14 @@
+# =============================================================================
+# DISABLED IN THIS BUILD (SINGLE-AGENT).
+# This is the multi-agent orchestrator (LangGraph DAG:
+#   Language -> Asset -> Scene -> Verification -> Execution).
+# It is NOT wired into the running app: main.py imports and builds
+# `single_agent.SingleAgentOrchestrator` instead. The only remaining
+# construction of `Orchestrator` here is the __main__ self-test at the bottom,
+# which runs only if this file is executed directly. Kept for reference; the
+# canonical multi-agent baseline lives in the separate Multi-Agent directory.
+# Do NOT re-wire this into main.py in the single-agent build.
+# =============================================================================
 import google.generativeai as genai
 import json
 import os

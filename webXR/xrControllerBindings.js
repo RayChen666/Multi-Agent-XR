@@ -5,8 +5,11 @@
  *   Right T0 (thumb)  — hold 2s → execute
  *   Left T1 (index)   — hold 2s → clear draft
  *   Left T0 (thumb)   — press → toggle help overlay
+ *
+ * Haptics: vibration-only secondary feedback (no-op on PC/emulator).
  */
 
+import { HAPTIC, pulsePreset } from './xrHaptics.js';
 import {
   setXrHoldProgress,
   setXrHudVisible,
@@ -23,8 +26,8 @@ let actions = null;
 
 const bindingState = {
   right_trigger_index: { wasDown: false },
-  right_trigger_thumb: { wasDown: false, detector: null },
-  left_trigger_index: { wasDown: false, detector: null },
+  right_trigger_thumb: { wasDown: false, detector: null, firedHalf: false },
+  left_trigger_index: { wasDown: false, detector: null, firedHalf: false },
   left_trigger_thumb: { wasDown: false },
 };
 
@@ -96,6 +99,7 @@ function isBusy() {
 function resetBindingState() {
   for (const key of Object.keys(bindingState)) {
     bindingState[key].wasDown = false;
+    bindingState[key].firedHalf = false;
     bindingState[key].detector?.update(false);
   }
   setXrHoldProgress(0);
@@ -137,20 +141,23 @@ export function initXrControllerBindings() {
   resetBindingState();
 }
 
-function onRightIndexDown() {
+function onRightIndexDown(gamepad) {
   if (!actions) return;
   if (isBusy()) {
     setXrStatusText('Busy — wait for processing to finish');
+    pulsePreset(gamepad, HAPTIC.deny);
     return;
   }
   setXrStatusText('Listening… (release to transcribe)');
+  pulsePreset(gamepad, HAPTIC.listenStart);
   void actions.startListen();
 }
 
-function onRightIndexUp() {
+function onRightIndexUp(gamepad) {
   if (!actions) return;
   const result = actions.stopListen();
   if (result?.ok) {
+    pulsePreset(gamepad, HAPTIC.listenStop);
     setXrStatusText('Processing speech…');
   } else if (actions.getListenState() === 'idle') {
     setXrStatusText('Ready');
@@ -165,9 +172,9 @@ function pollIndexBinding(hand, button, state, onDown, onUp) {
     const pressed = isButtonPressed(gamepad, button);
 
     if (pressed && !state.wasDown) {
-      onDown();
+      onDown(gamepad);
     } else if (!pressed && state.wasDown) {
-      onUp();
+      onUp(gamepad);
     }
 
     state.wasDown = pressed;
@@ -182,7 +189,7 @@ function pollToggleBinding(hand, button, state, onToggle) {
     const pressed = isButtonPressed(gamepad, button);
 
     if (pressed && !state.wasDown) {
-      onToggle();
+      onToggle(gamepad);
     }
 
     state.wasDown = pressed;
@@ -195,16 +202,31 @@ function pollHoldBinding(hand, button, state, statusWhileHolding) {
     if (!gamepad || !state.detector) return;
 
     const pressed = isButtonPressed(gamepad, button);
-    const { holding, progress } = state.detector.update(pressed);
+    const { holding, progress, completed } = state.detector.update(pressed);
+
+    if (!pressed) {
+      state.firedHalf = false;
+    }
 
     if (holding && !isBusy()) {
       setXrHoldProgress(progress);
       setXrStatusText(`${statusWhileHolding} ${Math.round(progress * 100)}%`);
+
+      // Milestone pulses: ~50% tick, then stronger pulse at complete.
+      if (!state.firedHalf && progress >= 0.5) {
+        state.firedHalf = true;
+        pulsePreset(gamepad, HAPTIC.holdHalf);
+      }
+      if (completed) {
+        pulsePreset(gamepad, HAPTIC.holdComplete);
+      }
     } else if (!holding && state.wasDown) {
       setXrHoldProgress(0);
       if (!isBusy() && actions?.getListenState?.() === 'idle') {
         setXrStatusText('Ready');
       }
+    } else if (holding && isBusy() && completed) {
+      pulsePreset(gamepad, HAPTIC.deny);
     }
 
     state.wasDown = pressed;
@@ -252,7 +274,10 @@ export function updateXrControllerBindings({ renderer, controllers }) {
     'left',
     XR_BUTTONS.SQUEEZE,
     bindingState.left_trigger_thumb,
-    () => toggleXrHelpMenu(),
+    (gamepad) => {
+      pulsePreset(gamepad, HAPTIC.helpToggle);
+      toggleXrHelpMenu();
+    },
   )(controllers);
 }
 

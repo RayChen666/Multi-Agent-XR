@@ -1,0 +1,78 @@
+SINGLE-AGENT vs MULTI-AGENT: DESIGN PROPOSAL
+
+WHY
+---
+We add a single-agent version so we can compare it against our current multi-agent
+system. One agent does EVERYTHING in a single response: intent + asset choice +
+spatial math + the final action contract. No specialized agents, no handoffs.
+
+The point is comparative: a single-agent baseline isolates what we actually claim
+matters (dividing the work across specialized roles + a verification step). Hypothesis:
+single agent is fine on trivial commands ("move the chair") but degrades on complex,
+precise, embodied tasks (multi-object layouts, "around/facing", "put it there"), where
+doing everything at once means dropped constraints, sloppy placement, and hallucinated
+object references.
+
+Key stance: we do NOT rig it to fail. Same info, same model, same safety net. If
+multi-agent still wins, that's an honest result from the architecture. A rigged
+baseline would kill the study's credibility.
+
+
+FIT WITH THE USER STUDY
+-----------------------
+Subjective study: participants compare the two and tell us which placed things better.
+For that to be valid, both builds must be identical except the "brain" (same frontend,
+assets, scene, model, render path). Since this directory is a copy of the working
+system, that's basically already true. We hardcode the single agent here, so the study
+compares two deployments: multi-agent build (other directory) vs single-agent build
+(this one).
+
+
+DESIGN CHOICES
+--------------
+1. New file single_agent.py = the ONLY reasoning agent. One LLM call gets everything
+   the pipeline sees (command, scene inventory, bounds, user position, gaze, asset
+   catalog) and returns one action plan (list of move/rotate/add/remove ops).
+
+2. Orchestrator stays mostly the same. We keep its external contract
+   (process_command -> bool, plus user_position, gaze, last_result_state). So main.py,
+   HTTP, WebSocket, and the frontend don't change. Internally we just swap the 4-agent
+   graph for a straight line: prompt -> one LLM call -> verify + retry -> execute.
+
+3. Reuse the DETERMINISTIC functions from the other agents, NOT their prompts:
+   - Asset materialization (catalog lookup, id gen, metadata). Agent only picks an asset
+     name; the deterministic part builds the full object so the LLM never invents a
+     modelPath or collision box.
+   - Collision check (AABB) + its safe-position suggestions.
+   - Execution + WebSocket broadcast from the Database.
+   We do NOT give it the placement helpers (facing/around/grid) - those would hide the
+   precision gap. All coordinate math goes through the single LLM call.
+
+4. Keep verification + retry for the single agent (same 3-try budget as now). This is
+   the "fair fight" principle. The verifier only catches collisions/bounds, not semantic
+   precision, so real weaknesses still show.
+
+
+NOT CHANGING
+------------
+Frontend/WebXR, assets, scene data, render path, HTTP endpoint, WebSocket. The
+multi-agent system itself stays the baseline in the other directory.
+
+
+OPEN QUESTIONS (to settle before we build)
+------------------------------------------
+- Exact action-plan schema + how strict we validate it.
+- LLM temperature / max tokens (document so both builds are comparable).
+- Optional per-command log (latency, retries, hallucinated ids) as objective backing.
+- Fixed command list / task tiers each participant runs.
+
+
+ONE LINE
+--------
+Add single_agent.py that does everything in one LLM pass, keep the orchestrator contract,
+reuse the deterministic plumbing (not the prompts), give it the same safety net, and let
+the multi-agent advantage on complex tasks emerge honestly.
+
+NO IMAGE AGENT
+SINGLE ==> 1 LLM and re-used functions CANNOT HAVE IMAGE AGENT!!
+BUT when Image Agent ==> The Image Parsing Agent + The Image Agent prompt ==> Image = 1 Agents

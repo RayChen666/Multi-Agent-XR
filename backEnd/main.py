@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, List, Dict, Optional, Set
-from orchestrator import Orchestrator
+from single_agent import SingleAgentOrchestrator
 from __init__ import LanguageAgent, SceneAgent, AssetAgent, CodeAgent, VerificationAgent
 from database import Database
 from stt.routes import router as stt_router
@@ -47,8 +47,8 @@ asset_agent = AssetAgent(scene_database)
 code_agent = CodeAgent(scene_database)
 verification_agent = VerificationAgent(scene_database)
 
-# Initialize orchestration agent
-orchestration_agent = Orchestrator(language_agent, 
+# Initialize orchestration agent (SINGLE-AGENT build — drop-in for Orchestrator)
+orchestration_agent = SingleAgentOrchestrator(language_agent, 
                                    scene_agent, 
                                    asset_agent,
                                    code_agent, 

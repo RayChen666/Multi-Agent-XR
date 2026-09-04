@@ -32,9 +32,14 @@ import {
 } from './xrControllerBindings.js';
 import {
   initXrHud,
+  updateXrHud,
   setXrCommandText,
   setXrStatusText,
 } from './xrHud.js';
+import {
+  initXrLocomotion,
+  updateXrLocomotion,
+} from './xrLocomotion.js';
 
 
 // Global scene query interface for agents
@@ -97,6 +102,13 @@ async function setupScene({ scene, camera, renderer, player, controllers }) {
 
   initXrHud(camera);
   initXrControllerBindings();
+  initXrLocomotion({
+    player,
+    camera,
+    getBounds: () => sceneDatabase?.metadata?.bounds ?? null,
+    getSpawn: () => sceneDatabase?.metadata?.userSpawnPoint ?? null,
+    getListenState,
+  });
   wireXrControllerActions({
     startListen: () => startListen({ ptt: true }),
     stopListen,
@@ -435,6 +447,16 @@ function onFrame(delta, time, { scene, camera, renderer, player, controllers }) 
   updateGazeGizmo(camera, Array.from(loadedObjects.values()));
 
   updateXrControllerBindings({ renderer, controllers });
+
+  // Snap locomotion (thumbsticks) — independent of HUD / command bindings.
+  updateXrLocomotion({ renderer, controllers });
+
+  // Wrist HUD: attach to left grip + gaze-to-reveal (bindings unchanged).
+  updateXrHud({
+    camera,
+    controllers,
+    presenting: Boolean(renderer?.xr?.isPresenting),
+  });
 }
 
 init(setupScene, onFrame);
