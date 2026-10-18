@@ -40,6 +40,7 @@ class ImageAgent:
         load_dotenv(Path(__file__).resolve().parents[2] / ".env")
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel('gemini-3.1-pro-preview')
+        #self.model = genai.GenerativeModel('gemini-4-argon')
 
         if assets_base_path is None:
             repo_root = Path(__file__).resolve().parents[2]

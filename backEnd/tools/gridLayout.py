@@ -1,8 +1,10 @@
 import math
 from typing import Dict, List
 
+from tools.spacing import MIN_CLEARANCE, WALL_INSET
 
-def grid_layout_positions(objects: List[Dict], room_bounds: Dict, gap: float = 0.15) -> List[Dict]:
+
+def grid_layout_positions(objects: List[Dict], room_bounds: Dict, gap: float = MIN_CLEARANCE) -> List[Dict]:
     """
     Deterministically place N objects in a grid that fits inside room_bounds.
 
@@ -22,7 +24,7 @@ def grid_layout_positions(objects: List[Dict], room_bounds: Dict, gap: float = 0
     W = max((obj.get('collision') or {}).get('width', 0.4) for obj in objects)
     D = max((obj.get('collision') or {}).get('depth', 0.4) for obj in objects)
 
-    wall_buf = 0.1
+    wall_buf = WALL_INSET['next_to']
     min_x = room_bounds['min']['x'] + W / 2 + wall_buf
     max_x = room_bounds['max']['x'] - W / 2 - wall_buf
     min_z = room_bounds['min']['z'] + D / 2 + wall_buf

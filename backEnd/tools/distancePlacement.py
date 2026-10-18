@@ -2,7 +2,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.aabbCheck import build_aabb
+from tools.aabbCheck import build_aabb, clamp_into_room, world_collision
+from tools.orientation import direction_axis
 
 """
 Edge-to-edge distance placement: solves commands like
@@ -12,21 +13,13 @@ width/height/depth + geometric-center offset) and positioning the mover so
 that abs(bound_mover - bound_anchor) along the travel axis equals the
 requested distance, edge to edge (not center to center).
 
-Direction convention matches SceneAgent's coordinate system:
-X-axis: left(-) to right(+), Z-axis: front(-) to back(+).
+Directions are relative to the ANCHOR, not the user (tools.orientation.direction_axis):
+front/back follow the anchor's own facing; left/right are as seen by someone standing
+in front of the anchor. For an anchor with rotation_y = 0: front = +Z, back = -Z,
+left = -X, right = +X.
 """
 
 AXIS_INDEX = {'x': 0, 'y': 1, 'z': 2}
-
-# direction -> (axis, sign). sign=+1 places the mover on the anchor's max
-# side (back/right), sign=-1 on the anchor's min side (front/left).
-DIRECTIONS = {
-    'back': ('z', +1),
-    'behind': ('z', +1),
-    'front': ('z', -1),
-    'left': ('x', -1),
-    'right': ('x', +1),
-}
 
 
 def distance_placement(
@@ -46,7 +39,7 @@ def distance_placement(
         mover:       Object dict with 'position' and 'collision' (width/height/depth/offset).
         anchor:      Object dict with 'position' and 'collision'.
         distance:    Requested edge-to-edge gap in meters (>= 0).
-        direction:   One of 'back', 'behind', 'front', 'left', 'right'.
+        direction:   One of 'back', 'behind', 'front', 'left', 'right' (relative to anchor).
         room_bounds: Optional {'min': {'x','y','z'}, 'max': ...} for clamping.
 
     Returns:
@@ -55,18 +48,18 @@ def distance_placement(
     Raises:
         ValueError: unknown direction, or either object lacks 'collision'.
     """
-    if direction not in DIRECTIONS:
-        raise ValueError(f"Unknown direction '{direction}', expected one of {sorted(DIRECTIONS)}")
     if not mover.get('collision') or not anchor.get('collision'):
         raise ValueError("Both mover and anchor require a 'collision' field to compute bounding boxes")
 
-    axis, sign = DIRECTIONS[direction]
+    # sign=+1 places the mover on the anchor's max side of `axis`, -1 on its min side.
+    axis, sign = direction_axis(anchor, direction)
     ai = AXIS_INDEX[axis]
 
     anchor_min, anchor_max = build_aabb(anchor)
 
-    mov_col = mover['collision']
-    mov_offset = mov_col.get('offset', {'x': 0, 'y': 0, 'z': 0})
+    # Mover box in world axes (its current yaw; new objects have none yet).
+    mov_col = world_collision(mover)
+    mov_offset = mov_col['offset']
     half_extent = {'x': mov_col['width'], 'y': mov_col['height'], 'z': mov_col['depth']}[axis] / 2
 
     if sign > 0:
@@ -78,21 +71,17 @@ def distance_placement(
     # AABB center -> position (undo the collision offset build_aabb applies).
     new_axis_val = target_center - mov_offset.get(axis, 0)
 
+    # Cross axis: mover box centre on the anchor's box centre.
     cross_axis = 'x' if axis == 'z' else 'z'
-    anchor_pos = anchor.get('position', {})
-    cross_val = float(anchor_pos.get(cross_axis, 0)) - mov_offset.get(cross_axis, 0)
+    ci = AXIS_INDEX[cross_axis]
+    cross_val = (anchor_min[ci] + anchor_max[ci]) / 2 - mov_offset.get(cross_axis, 0)
 
     position = dict(mover.get('position', {}))
     position[axis] = round(new_axis_val, 3)
     position[cross_axis] = round(cross_val, 3)
 
     if room_bounds:
-        mov_hw = mov_col['width'] / 2
-        mov_hd = mov_col['depth'] / 2
-        position['x'] = max(room_bounds['min']['x'] + mov_hw + 0.05,
-                             min(room_bounds['max']['x'] - mov_hw - 0.05, position['x']))
-        position['z'] = max(room_bounds['min']['z'] + mov_hd + 0.05,
-                             min(room_bounds['max']['z'] - mov_hd - 0.05, position['z']))
+        position = clamp_into_room(mover, position, room_bounds)
 
     return position
 
@@ -105,10 +94,7 @@ def measured_edge_distance(mover: Dict, anchor: Dict, direction: str) -> float:
     requested side. Used to verify abs(bound_mover - bound_anchor) == distance
     after a placement (or LLM-proposed move) has been applied.
     """
-    if direction not in DIRECTIONS:
-        raise ValueError(f"Unknown direction '{direction}', expected one of {sorted(DIRECTIONS)}")
-
-    axis, sign = DIRECTIONS[direction]
+    axis, sign = direction_axis(anchor, direction)
     ai = AXIS_INDEX[axis]
 
     mover_min, mover_max = build_aabb(mover)

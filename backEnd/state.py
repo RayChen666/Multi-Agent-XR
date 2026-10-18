@@ -149,6 +149,23 @@ class MASState(TypedDict):
     # FINAL RESULTS
     # ============================================================================
     
+    constraint_violations: Optional[List[Dict[str, Any]]]
+    """
+    Skill postcondition failures from the last verification, e.g.
+    [{"message": "sink_01 is 0.90m back of table, expected 1.5m", "fixable": True}].
+    Fed back to the Scene Agent on retry; a non-fixable one ends the run.
+    """
+
+    best_effort: Optional[Dict[str, Any]]
+    """
+    Collision-free attempt with the fewest constraint violations so far:
+    {"placement": proposed_placement, "violations": [...]}. Executed when retries run
+    out and the skill sets ACCEPT_ON_EXHAUSTED (e.g. graph_layout).
+    """
+
+    next_step: Optional[Literal["execution_agent", "increment_iteration", "end"]]
+    """Routing decision made inside the verification node (edges only read it)."""
+
     success: bool
     """Whether the command executed successfully"""
     
@@ -178,6 +195,7 @@ class ParsedCommand(TypedDict):
     spatial_concepts: List[str]
     intent_summary: str
     action_hints: Dict[str, Any]
+    skill: Optional[Dict[str, Any]]  # {"name": str, "args": dict} from skills/registry, or None
 
 
 class SpatialTransformation(TypedDict):

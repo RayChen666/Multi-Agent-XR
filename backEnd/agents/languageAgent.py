@@ -4,6 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 import re
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from skills.registry import get_registry
 
 class LanguageAgent:
     def __init__(self):
@@ -565,15 +569,18 @@ class LanguageAgent:
         """
 
         gaze_context = self._build_gaze_context(gaze)
+        # Level-1 skill disclosure: names, descriptions and arg schemas only.
+        skill_index = get_registry().index_prompt()
 
-        full_prompt = f"{system_prompt}{context_str}{gaze_context}\n\nInput: {prompt}\n\nOutput JSON:"
-        
+        # Static parts first, per-request parts last (keeps Gemini's prefix cache warm).
+        full_prompt = f"{system_prompt}{skill_index}{context_str}{gaze_context}\n\nInput: {prompt}\n\nOutput JSON:"
+
         try:
             response = self.model.generate_content(
                 full_prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.1,
-                    max_output_tokens=500,
+                    max_output_tokens=1024,
                     response_mime_type="application/json"
                 )
             )
@@ -613,13 +620,17 @@ class LanguageAgent:
                 if 'resolved_spatial_target' not in parsed:
                     parsed['resolved_spatial_target'] = None
 
+                registry = get_registry()
+                parsed['skill'] = registry.validate_call(parsed.get('skill')) or registry.infer_call(parsed)
+
                 self._normalize_delete_intent(parsed, prompt)
                 self._normalize_resolved_spatial_target(parsed, gaze)
-                
+
                 print(f"Language Agent analyzed:")
                 print(f"   Command Type: {parsed['command_type']}")
                 print(f"   Objects: {parsed['involved_objects']}")
                 print(f"   Intent: {parsed['intent_summary']}")
+                print(f"   Skill: {registry.describe(parsed['skill'])}")
                 
                 return parsed
             else:
@@ -691,8 +702,10 @@ class LanguageAgent:
                 'requires_asset_selection': command_type == 'ADD/DELETE',
                 'requires_spatial_reasoning': True
             },
-            'resolved_spatial_target': None
+            'resolved_spatial_target': None,
         }
+        parsed['skill'] = get_registry().infer_call(parsed)
+        print(f"   Skill: {get_registry().describe(parsed['skill'])}")
         self._normalize_delete_intent(parsed, prompt)
         return parsed
 

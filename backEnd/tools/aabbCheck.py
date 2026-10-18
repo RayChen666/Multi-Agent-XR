@@ -1,65 +1,79 @@
 import numpy as np
 import math
 
+from tools.spacing import COLLISION_BUFFER, COLLISION_TOLERANCE, ROOM_MARGIN
+
+def world_collision(obj) -> dict:
+      """
+      The object's collision box in WORLD axes, accounting for its yaw (rotation.y):
+      {'width', 'height', 'depth', 'offset': {x, y, z}}.
+
+      metadata 'collision' is in the model's local frame. The frontend's AABB helper
+      is a child of the rotated model, so a desk turned 90° really spans its depth
+      along x. three.js yaw θ maps local (x, z) to (x·cosθ + z·sinθ, −x·sinθ + z·cosθ)
+      — the same convention as tools/orientation.forward_vector. width/depth are the
+      AABB of the rotated box (exact at 0 / ±π/2 / π, conservative in between).
+      """
+      col = obj['collision']
+      ry = float((obj.get('rotation') or {}).get('y', 0) or 0)
+      c, s = math.cos(ry), math.sin(ry)
+      w, d = float(col['width']), float(col['depth'])
+      off = col.get('offset') or {}
+      ox, oz = float(off.get('x', 0)), float(off.get('z', 0))
+      return {
+            'width':  abs(w * c) + abs(d * s),
+            'height': float(col['height']),
+            'depth':  abs(w * s) + abs(d * c),
+            'offset': {'x': ox * c + oz * s, 'y': float(off.get('y', 0)), 'z': -ox * s + oz * c},
+      }
+
+
 def are_too_far_to_collide(obj_a, obj_b) -> bool:
       """Broad phase cull — skip pair if geometrically impossible to collide."""
-      col_a = obj_a.get('collision', {})
-      col_b = obj_b.get('collision', {})
+      if not obj_a.get('collision') or not obj_b.get('collision'):
+            return True
+      col_a, col_b = world_collision(obj_a), world_collision(obj_b)
 
-      width_a = col_a.get("width", 0)
-      depth_a = col_a.get("depth", 0)
-      width_b = col_b.get("width", 0)
-      depth_b = col_b.get("depth", 0)
+      radius_a = math.hypot(col_a['width'] / 2, col_a['depth'] / 2)
+      radius_b = math.hypot(col_b['width'] / 2, col_b['depth'] / 2)
 
-      radius_a = math.sqrt((width_a / 2) ** 2 + (depth_a / 2) ** 2)
-      radius_b = math.sqrt((width_b / 2) ** 2 + (depth_b / 2) ** 2)
+      # Measure between box centres, not origins: offsets reach 0.7 m on some assets.
+      dx = (obj_a['position']['x'] + col_a['offset']['x']) - (obj_b['position']['x'] + col_b['offset']['x'])
+      dz = (obj_a['position']['z'] + col_a['offset']['z']) - (obj_b['position']['z'] + col_b['offset']['z'])
 
-      threshold = radius_a + radius_b
-
-      pos_a = obj_a['position']
-      pos_b = obj_b['position']
-
-      dx = pos_a['x'] - pos_b['x']
-      dz = pos_a['z'] - pos_b['z']
-
-      distance = math.sqrt(dx ** 2 + dz ** 2)
-
-      return distance > threshold
+      return math.hypot(dx, dz) > radius_a + radius_b
 
 
 def build_aabb(obj):
       """
       Build an Axis-Aligned Bounding Box (AABB) for the given object.
-      Uses collision dims from metadata including geometric center offset.
+      Uses collision dims from metadata including geometric center offset,
+      rotated by the object's yaw (world_collision).
 
       Parameters:
-            obj (dict): object with 'position' and 'collision' fields.
+            obj (dict): object with 'position', 'collision' and optionally 'rotation'.
 
       Returns:
             (mins, maxs): two lists [x, y, z] for the AABB corners.
       """
       pos = obj['position']
-      col = obj['collision']
+      col = world_collision(obj)
 
       w = col['width']
       h = col['height']
       d = col['depth']
-      offset = col.get('offset', {'x': 0, 'y': 0, 'z': 0})
+      offset = col['offset']
 
-      ox = offset.get('x', 0)
-      oy = offset.get('y', 0)
-      oz = offset.get('z', 0)
-
-      cx = pos['x'] + ox
-      cy = pos['y'] + oy
-      cz = pos['z'] + oz
+      cx = pos['x'] + offset['x']
+      cy = pos['y'] + offset['y']
+      cz = pos['z'] + offset['z']
 
       mins = [cx - w/2, cy - h/2, cz - d/2]
       maxs = [cx + w/2, cy + h/2, cz + d/2]
 
       return mins, maxs
 
-def check_aabb_overlap(a_min, a_max, b_min, b_max, tolerance=0.1):
+def check_aabb_overlap(a_min, a_max, b_min, b_max, tolerance=COLLISION_TOLERANCE):
       for i in range(3):
             if a_max[i] <= b_min[i] + tolerance:
                   return False
@@ -97,14 +111,17 @@ def check_proposed_objects(proposed_objects, existing_objects) -> list:
 
             # compute safe positions from AABB edges (not anchor center)
             # so the mover's edge clears the anchor's edge by buf meters
-            buf = 0.05
-            mover_half_w = obj_a['collision']['width'] / 2
-            mover_half_d = obj_a['collision']['depth'] / 2
+            # Safe values are mover POSITIONS (origins): box-centre limits minus its offset.
+            buf = COLLISION_BUFFER
+            mover_col = world_collision(obj_a)
+            mover_half_w = mover_col['width'] / 2
+            mover_half_d = mover_col['depth'] / 2
+            mox, moz = mover_col['offset']['x'], mover_col['offset']['z']
 
-            safe_x_left  = round(min_b[0] - mover_half_w - buf, 3)  # mover right of anchor left edge
-            safe_x_right = round(max_b[0] + mover_half_w + buf, 3)  # mover left of anchor right edge
-            safe_z_back  = round(min_b[2] - mover_half_d - buf, 3)  # mover in front of anchor back edge
-            safe_z_front = round(max_b[2] + mover_half_d + buf, 3)  # mover behind anchor front edge
+            safe_x_left  = round(min_b[0] - mover_half_w - buf - mox, 3)  # mover entirely at -X of anchor
+            safe_x_right = round(max_b[0] + mover_half_w + buf - mox, 3)  # mover entirely at +X of anchor
+            safe_z_back  = round(min_b[2] - mover_half_d - buf - moz, 3)  # mover entirely at -Z of anchor
+            safe_z_front = round(max_b[2] + mover_half_d + buf - moz, 3)  # mover entirely at +Z of anchor
 
             suggestion = (
                   f"Move {obj_a['id']} away from {obj_b['id']}. "
@@ -157,3 +174,79 @@ def check_collision(scene_objects):
                               "severity": "error"
                         })
       return violations
+
+WALL_NAMES = {
+      ('x', 'min'): 'left wall', ('x', 'max'): 'right wall',
+      ('z', 'min'): 'back wall', ('z', 'max'): 'front wall',
+}
+
+
+def _wall_problem(clearance, wall, margin) -> str:
+      """clearance = edge-to-wall distance, negative when the AABB is inside the wall."""
+      if clearance < 0:
+            return f"goes {-clearance:.2f}m into the {wall}"
+      return f"is only {clearance:.2f}m from the {wall} (minimum {margin}m)"
+
+
+def check_room_bounds(objects, room_bounds, margin=ROOM_MARGIN) -> list:
+      """
+      Every object's AABB must stay inside the walls: x/z edges at least `margin`
+      inside each wall (tools/spacing.py ROOM_MARGIN). Returns one violation per
+      offending object, with the nearest in-bounds position as `suggested_position`;
+      `fixable` is False when the object is wider than the room itself.
+      (No floor check: door/sun models' origins are not at their base, so a floor
+      check would reject them at the y=-3 every placement tool uses.)
+      """
+      violations = []
+      eps = 1e-3  # positions are rounded to mm; don't flag rounding noise
+      for obj in objects:
+            if not obj.get('collision') or not obj.get('position'):
+                  continue
+            lo, hi = build_aabb(obj)
+            pos = obj['position']
+            fixed = {k: pos[k] for k in ('x', 'y', 'z')}
+            problems, fixable = [], True
+
+            for i, axis in ((0, 'x'), (2, 'z')):
+                  lo_ok = room_bounds['min'][axis] + margin
+                  hi_ok = room_bounds['max'][axis] - margin
+                  if hi[i] - lo[i] > hi_ok - lo_ok + eps:
+                        fixable = False
+                        problems.append(f"is {hi[i] - lo[i]:.2f}m along {axis}, wider than the room")
+                  elif lo[i] < lo_ok - eps:
+                        problems.append(_wall_problem(lo[i] - room_bounds['min'][axis], WALL_NAMES[axis, 'min'], margin))
+                        fixed[axis] = round(pos[axis] + (lo_ok - lo[i]), 3)
+                  elif hi[i] > hi_ok + eps:
+                        problems.append(_wall_problem(room_bounds['max'][axis] - hi[i], WALL_NAMES[axis, 'max'], margin))
+                        fixed[axis] = round(pos[axis] - (hi[i] - hi_ok), 3)
+
+            if problems:
+                  message = f"{obj['id']} " + " and ".join(problems)
+                  if fixable:
+                        message += f"; move its center to x={fixed['x']}, y={fixed['y']}, z={fixed['z']}"
+                  violations.append({
+                        'message': message,
+                        'fixable': fixable,
+                        'kind': 'room_bounds',
+                        'object_id': obj['id'],
+                        'suggested_position': fixed,
+                  })
+      return violations
+
+
+def clamp_into_room(obj, position, room_bounds, margin=ROOM_MARGIN) -> dict:
+      """
+      Nearest position (origin) for `obj` at which its rotated box stays `margin`
+      inside every wall. Works in box-centre space, so offsets are respected.
+      An axis on which the object is wider than the room is left unchanged.
+      """
+      col = world_collision(obj)
+      out = dict(position)
+      for axis, size in (('x', col['width']), ('z', col['depth'])):
+            centre = float(position[axis]) + col['offset'][axis]
+            lo = room_bounds['min'][axis] + margin + size / 2
+            hi = room_bounds['max'][axis] - margin - size / 2
+            if lo <= hi:
+                  centre = min(max(centre, lo), hi)
+            out[axis] = round(centre - col['offset'][axis], 3)
+      return out

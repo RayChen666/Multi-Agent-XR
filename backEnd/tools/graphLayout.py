@@ -1,6 +1,10 @@
 import math
 from typing import Dict, List, Optional
 
+from tools.aabbCheck import world_collision
+from tools.orientation import facing_angle
+from tools.spacing import NEXT_TO_GAP, ROOM_MARGIN, WALL_INSET
+
 # back_wall/front_wall constrain Z, left_wall/right_wall constrain X — matches
 # the orientation convention ImageAgent is instructed to use when extracting
 # the graph (back=north=-Z, front=south=+Z, left=west=-X, right=east=+X).
@@ -43,22 +47,19 @@ CORNER_ROTATION = {
     'front_right': math.pi,   # front wall dominant → face north (-Z)
 }
 
-# Wall inset distances — mirrors sceneAgent's INWARD OFFSET RULE:
-#   next_to / against wall  → 0.1 m inward from wall
-#   close_to / near wall    → 0.25 m inward from wall
-WALL_INSET = {
-    'next_to':    0.1,
-    'adjacent_to': 0.1,
-    'close_to':   0.25,
-}
+# Wall inset distances (edge to wall) live in tools/spacing.py: WALL_INSET.
+
+
+# A 'facing' source sits on `side` of its target and looks back at it.
+SIDE_LOOK_YAW = {'east': -math.pi / 2, 'west': math.pi / 2, 'north': 0.0, 'south': math.pi}
 
 
 def layout_graph_positions(nodes_to_place: List[Dict],
                             edges: List[Dict],
                             anchor_object: Optional[str],
                             room_bounds: Dict,
-                            # gap: float = 0.15
-                            gap: float = 0.1
+                            gap: float = NEXT_TO_GAP,
+                            report: Optional[Dict] = None,
                             ) -> Optional[Dict[str, Dict]]:
     """
     Deterministically resolve position + rotation for each object from a
@@ -84,11 +85,11 @@ def layout_graph_positions(nodes_to_place: List[Dict],
         - Perpendicular  : aligned to target's true AABB centre (px = tx, mirroring
                            facingPlacement.py's own "same lateral position" convention)
         - 'facing' edges : only set a rotation flag here; rotation is computed
-                           post-resolution via atan2(tx−px, tz−pz) like
-                           facingPlacement.py — NOT from a cardinal lookup table.
+                           post-resolution via tools.orientation.facing_angle
+                           — NOT from a cardinal lookup table.
 
     Rotation (output phase):
-        facing target resolved  → atan2(tx−px, tz−pz)   (facingPlacement.py)
+        facing target resolved  → tools.orientation.facing_angle
         corner placement        → CORNER_ROTATION diagonal bisector
         wall placement          → WALL_ROTATION (face away from wall)
         no constraint           → 0.0
@@ -99,6 +100,16 @@ def layout_graph_positions(nodes_to_place: List[Dict],
         anchor_object:  graph node name of the dominant piece (processed first).
         room_bounds:    {'min': {'x','y','z'}, 'max': {'x','y','z'}}.
         gap:            minimum edge-to-edge clearance between objects (metres).
+        report:         optional dict; filled with 'relaxed_edges' — wall/corner edges
+                        given up so an object chained to that node fits in the room.
+
+    Sizes use each object's FINAL yaw (facing > corner > wall, as in the output
+    phase): a desk turned against the right wall spans its depth along x.
+
+    Feasibility (after Phase B): an object pushed past a wall shifts back inside
+    together with every node whose position on that axis derives from the same
+    root (e.g. desk + the chair placed east of it), so their relation holds. If the
+    root was anchored to a wall on that axis, that wall edge is relaxed.
 
     Returns:
         {object_id: {'x','y','z','rotation_y'}} for every object, or None when
@@ -112,18 +123,41 @@ def layout_graph_positions(nodes_to_place: List[Dict],
     max_b = room_bounds['max']
     floor_y = float(min_b['y'])
 
+    # ── Planned yaw per node (same priority as the output phase) ───────────
+
+    def planned_yaw(node_name: str) -> float:
+        own = [e for e in edges if e.get('from') == node_name]
+        for e in own:
+            if (e.get('relation') == 'facing' and e.get('to') in by_node
+                    and e.get('side') in SIDE_LOOK_YAW):
+                return SIDE_LOOK_YAW[e['side']]
+        for e in own:
+            corner = (e.get('corner') or '').replace('-', '_')
+            if e.get('relation') == 'at_corner' and corner in CORNER_ROTATION:
+                return CORNER_ROTATION[corner]
+        for e in own:
+            if e.get('relation') in WALL_INSET and e.get('to') in WALL_ROTATION:
+                return WALL_ROTATION[e['to']]
+        return 0.0
+
+    default_col = {'width': 1.2, 'height': 1.0, 'depth': 1.2}
+    world_col = {
+        n: world_collision({'collision': obj.get('collision') or default_col,
+                            'rotation': {'y': planned_yaw(n)}})
+        for n, obj in by_node.items()
+    }
+
     # ── Collision geometry helpers ─────────────────────────────────────────
 
     def half_extent(node_name: str, axis: str) -> float:
-        col = (by_node.get(node_name) or {}).get('collision') or {}
-        return float(col.get('width' if axis == 'x' else 'depth', 0.6)) / 2
+        col = world_col[node_name]
+        return col['width' if axis == 'x' else 'depth'] / 2
 
     def offset_of(node_name: str, axis: str) -> float:
-        # collision.offset shifts the TRUE AABB centre away from 'position'.
-        # All gap/wall math works in true-centre space; positions are converted
-        # back at the end: position = true_centre - offset.
-        col = (by_node.get(node_name) or {}).get('collision') or {}
-        return float((col.get('offset') or {}).get(axis, 0.0))
+        # collision.offset (rotated with the object) shifts the TRUE AABB centre
+        # away from 'position'. All gap/wall math works in true-centre space;
+        # positions are converted back at the end: position = true_centre - offset.
+        return world_col[node_name]['offset'][axis]
 
     def true_pos(node_name: str, axis: str) -> Optional[float]:
         """True AABB centre for a resolved node, or None if not yet resolved."""
@@ -141,6 +175,8 @@ def layout_graph_positions(nodes_to_place: List[Dict],
     # object-relative edge that touches the same axis.
 
     resolved: Dict[str, Dict] = {}
+    wall_src: Dict[str, Dict[str, str]] = {}   # node -> axis -> wall edge 'to' that anchored it
+    axis_src: Dict[str, Dict[str, str]] = {}   # node -> axis -> target node it was derived from
 
     def wall_position(axis: str, side: str, node_name: str, relation: str) -> float:
         inset = WALL_INSET.get(relation, 0.1)
@@ -160,7 +196,9 @@ def layout_graph_positions(nodes_to_place: List[Dict],
 
             if relation in WALL_INSET and target in WALL_AXIS:
                 axis, side = WALL_AXIS[target]
-                pos.setdefault(axis, wall_position(axis, side, node_name, relation))
+                if axis not in pos:
+                    pos[axis] = wall_position(axis, side, node_name, relation)
+                    wall_src.setdefault(node_name, {})[axis] = target
                 pos.setdefault('_wall', target)
 
             elif relation == 'at_corner':
@@ -169,7 +207,9 @@ def layout_graph_positions(nodes_to_place: List[Dict],
                 if axes:
                     for axis, side in axes.items():
                         # corner is always "against" (next_to) both walls
-                        pos.setdefault(axis, wall_position(axis, side, node_name, 'next_to'))
+                        if axis not in pos:
+                            pos[axis] = wall_position(axis, side, node_name, 'next_to')
+                            wall_src.setdefault(node_name, {})[axis] = target
                     pos.setdefault('_corner', corner)
 
     # ── Phase B — object-relative edges (iterated) ────────────────────────
@@ -218,6 +258,7 @@ def layout_graph_positions(nodes_to_place: List[Dict],
                     src_true = (tc - spacing if side in ('north', 'west')
                                 else tc + spacing)
                     pos[axis] = src_true - offset_of(node_name, axis)
+                    axis_src.setdefault(node_name, {})[axis] = target
                     changed = True
 
                 # Perpendicular axis: align to target's AABB centre (px = tx),
@@ -225,6 +266,7 @@ def layout_graph_positions(nodes_to_place: List[Dict],
                 if other_axis not in pos:
                     pos[other_axis] = (tgt_center(target, other_axis)
                                        - offset_of(node_name, other_axis))
+                    axis_src.setdefault(node_name, {})[other_axis] = target
                     changed = True
 
                 # Mark 'facing' edges — rotation computed post-resolution.
@@ -236,8 +278,50 @@ def layout_graph_positions(nodes_to_place: List[Dict],
         pos = resolved.setdefault(node_name, {})
         for axis in ('x', 'z'):
             if axis not in pos:
-                #pos[axis] = (float(min_b[axis]) + float(max_b[axis])) / 2 - offset_of(node_name, axis)
-                pos[axis] = (float(min_b[axis]) + float(max_b[axis])) / 2
+                # Box centre at the room centre — the same fallback tgt_center() gave any
+                # node aligned to this one earlier, so they stay aligned (a chair placed
+                # "east of the desk" before the desk's z was known still faces it square).
+                pos[axis] = (float(min_b[axis]) + float(max_b[axis])) / 2 - offset_of(node_name, axis)
+
+    # ── Feasibility — pull chains that cross a wall back into the room ────
+    relaxed: List[Dict] = []
+
+    def chain_root(node_name: str, axis: str) -> str:
+        seen = set()
+        while axis_src.get(node_name, {}).get(axis) and node_name not in seen:
+            seen.add(node_name)
+            node_name = axis_src[node_name][axis]
+        return node_name
+
+    for _ in range(len(by_node) + 1):
+        moved = False
+        for node_name in order:
+            for axis in ('x', 'z'):
+                half = half_extent(node_name, axis)
+                lo_ok = float(min_b[axis]) + ROOM_MARGIN
+                hi_ok = float(max_b[axis]) - ROOM_MARGIN
+                if 2 * half > hi_ok - lo_ok:
+                    continue  # wider than the room: nothing fits; room-bounds check reports it
+                centre = resolved[node_name][axis] + offset_of(node_name, axis)
+                if centre - half < lo_ok - 1e-6:
+                    shift = lo_ok - (centre - half)
+                elif centre + half > hi_ok + 1e-6:
+                    shift = hi_ok - (centre + half)
+                else:
+                    continue
+                root = chain_root(node_name, axis)
+                for n in by_node:
+                    if chain_root(n, axis) == root:
+                        resolved[n][axis] += shift
+                wall = wall_src.get(root, {}).get(axis)
+                if wall and not any(r['from'] == root and r['to'] == wall for r in relaxed):
+                    relaxed.append({'from': root, 'to': wall, 'shift': round(shift, 3), 'axis': axis,
+                                    'because': node_name})
+                moved = True
+        if not moved:
+            break
+    if report is not None:
+        report['relaxed_edges'] = relaxed
 
     # ── Output: build final placement dicts ───────────────────────────────
     out: Dict[str, Dict] = {}
@@ -247,7 +331,7 @@ def layout_graph_positions(nodes_to_place: List[Dict],
         z   = round(float(pos['z']), 3)
 
         # Rotation priority:
-        #   1. 'facing' target → atan2(tx−px, tz−pz) like facingPlacement.py
+        #   1. 'facing' target → tools.orientation.facing_angle (shared yaw convention)
         #   2. corner placement → diagonal bisector (CORNER_ROTATION)
         #   3. wall placement   → face away from wall (WALL_ROTATION)
         #   4. default          → 0.0
@@ -257,7 +341,7 @@ def layout_graph_positions(nodes_to_place: List[Dict],
             pz = z + offset_of(node_name, 'z')
             tx = resolved[facing_target]['x'] + offset_of(facing_target, 'x')
             tz = resolved[facing_target]['z'] + offset_of(facing_target, 'z')
-            rotation_y = math.atan2(tx - px, tz - pz)
+            rotation_y = facing_angle(px, pz, tx, tz)
         elif '_corner' in pos:
             rotation_y = CORNER_ROTATION.get(pos['_corner'], 0.0)
         elif '_wall' in pos:

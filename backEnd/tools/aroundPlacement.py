@@ -1,12 +1,15 @@
 import math
 from typing import Dict, List, Optional
 
+from tools.orientation import facing_angle
+from tools.spacing import MIN_CLEARANCE, ROOM_MARGIN
+
 
 def around_placement_positions(
     movers: List[Dict],
     anchor: Dict,
     room_bounds: Optional[Dict] = None,
-    gap: float = 0.15,
+    gap: float = MIN_CLEARANCE,
     start_angle: float = 0.0,
 ) -> List[Dict]:
     """
@@ -19,7 +22,8 @@ def around_placement_positions(
         room_bounds: Optional {'min': {'x','y','z'}, 'max': ...}.
                      Positions outside bounds are clamped inward.
         gap:         Clearance between mover bbox edge and anchor bbox edge (metres).
-        start_angle: Angle in radians for the first mover (0 = in front of anchor, -Z).
+        start_angle: Offset in radians for the first mover, measured from the anchor's
+                     front (its own facing, see tools.orientation).
 
     Returns:
         List of {'x', 'y', 'z', 'rotation_y'} dicts in same order as movers,
@@ -44,15 +48,18 @@ def around_placement_positions(
 
     N = len(movers)
     angle_step = 2 * math.pi / N
+    # Ring parameterisation: angle θ → (sin θ, -cos θ). θ = π - ry points along the
+    # anchor's forward (sin ry, cos ry), so the first mover sits in front of the anchor.
+    anchor_ry = float((anchor.get('rotation') or {}).get('y', 0) or 0)
+    start_angle = start_angle + math.pi - anchor_ry
 
-    x_margin = mov_hw + 0.05
-    z_margin = mov_hd + 0.05
+    x_margin = mov_hw + ROOM_MARGIN
+    z_margin = mov_hd + ROOM_MARGIN
 
     positions = []
     for i in range(N):
         angle = start_angle + i * angle_step
 
-        # angle=0 → in front of anchor (-Z), angle=π/2 → right (+X)
         px = ax + radius * math.sin(angle)
         pz = az - radius * math.cos(angle)
 
@@ -62,10 +69,8 @@ def around_placement_positions(
             pz = max(room_bounds['min']['z'] + z_margin,
                      min(room_bounds['max']['z'] - z_margin, pz))
 
-        # Face toward anchor.
-        # Model forward is +Z: rotating by θ makes object face (sinθ, cosθ) in XZ.
-        # To face direction (ax-px, az-pz): sin(θ)=ax-px, cos(θ)=az-pz → θ=atan2(ax-px, az-pz)
-        rotation_y = math.atan2(ax - px, az - pz)
+        # Face toward anchor (yaw convention lives in tools/orientation.py).
+        rotation_y = facing_angle(px, pz, ax, az)
 
         positions.append({
             'x': round(px, 3),

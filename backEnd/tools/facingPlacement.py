@@ -1,17 +1,25 @@
 import math
+import sys
+from pathlib import Path
 from typing import Dict, Optional
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.orientation import direction_axis, facing_angle
+from tools.aabbCheck import build_aabb, clamp_into_room, world_collision
+from tools.spacing import FACING_GAP
 
 
 def facing_placement(
     target: Dict,
     mover_collision: Optional[Dict] = None,
     room_bounds: Optional[Dict] = None,
-    gap: float = 0.5,
+    gap: float = FACING_GAP,
 ) -> Dict:
     """
     Compute position + rotation for a mover placed in front of target, facing it.
 
-    "In front" = the +Z side of target (the side facing toward the user at z≈0).
+    "In front" = the side target itself faces (tools.orientation.direction_axis),
+    e.g. the +Z side for rotation_y = 0. The mover is centered on target across it.
 
     Args:
         target:          Target object dict with 'position' and optionally 'collision'.
@@ -25,25 +33,32 @@ def facing_placement(
     tx = float(target.get('position', {}).get('x', 0))
     tz = float(target.get('position', {}).get('z', 0))
 
-    tgt_col = target.get('collision') or {}
-    tgt_hd = float(tgt_col.get('depth', 0.5)) / 2
+    # Target's real (rotated, offset) box; defaults when it has no collision data.
+    if target.get('collision'):
+        t_min, t_max = build_aabb(target)
+        t_centre = {'x': (t_min[0] + t_max[0]) / 2, 'z': (t_min[2] + t_max[2]) / 2}
+        t_half = {'x': (t_max[0] - t_min[0]) / 2, 'z': (t_max[2] - t_min[2]) / 2}
+    else:
+        t_centre, t_half = {'x': tx, 'z': tz}, {'x': 0.25, 'z': 0.25}
 
-    mov_col = mover_collision or {}
-    mov_hw = float(mov_col.get('width', 0.4)) / 2
-    mov_hd = float(mov_col.get('depth', 0.4)) / 2
+    # Place on the target's front side, `gap` clear of its edge. The mover will look
+    # back at the target, so size it with that yaw (it faces along -front).
+    axis, sign = direction_axis(target, 'front')
+    look = (-sign, 0.0) if axis == 'x' else (0.0, -sign)
+    mover = {'collision': mover_collision or {'width': 0.4, 'height': 0.8, 'depth': 0.4},
+             'rotation': {'y': math.atan2(look[0], look[1])}}
+    m_col = world_collision(mover)
+    m_half = {'x': m_col['width'] / 2, 'z': m_col['depth'] / 2}
 
-    # Place on the +Z side of target (toward the user)
-    px = tx
-    pz = tz + tgt_hd + gap + mov_hd
-
+    centre = dict(t_centre)
+    centre[axis] += sign * (t_half[axis] + gap + m_half[axis])
+    position = {'x': centre['x'] - m_col['offset']['x'], 'y': -3.0, 'z': centre['z'] - m_col['offset']['z']}
     if room_bounds:
-        px = max(room_bounds['min']['x'] + mov_hw + 0.05,
-                 min(room_bounds['max']['x'] - mov_hw - 0.05, px))
-        pz = max(room_bounds['min']['z'] + mov_hd + 0.05,
-                 min(room_bounds['max']['z'] - mov_hd - 0.05, pz))
+        position = clamp_into_room(mover, position, room_bounds)
+    px, pz = position['x'], position['z']
 
-    # Face toward target. Model forward is +Z: θ = atan2(tx-px, tz-pz)
-    rotation_y = math.atan2(tx - px, tz - pz)
+    # Face toward target (yaw convention lives in tools/orientation.py).
+    rotation_y = facing_angle(px, pz, tx, tz)
 
     return {
         'x': round(px, 3),

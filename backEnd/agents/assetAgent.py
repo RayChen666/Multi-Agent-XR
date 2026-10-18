@@ -69,13 +69,14 @@ class AssetAgent:
         """
 
         library = {}
+        pending_aliases = []  # (alias, canonical name), registered after every canonical name
 
         if not self.assets_path.exists():
             print(f"Assets path not found: {self.assets_path}")
             return library
         
-        # Scan all subdirectories
-        for asset_dir in self.assets_path.iterdir():
+        # Scan all subdirectories (sorted: the library must not depend on filesystem order)
+        for asset_dir in sorted(self.assets_path.iterdir()):
             if not asset_dir.is_dir():
                 continue
             
@@ -116,14 +117,28 @@ class AssetAgent:
                     "has_metadata": True
                 }
                 
-                for alias in metadata.get("aliases", []):
-                    library[alias] = library[asset_name]
+                pending_aliases.extend((alias, asset_name) for alias in metadata.get("aliases", []))
                 
                 print(f"Loaded: {asset_name} ({metadata['category']}/{metadata['subcategory']})")
                 
             except Exception as e:
                 print(f"Error loading metadata for {asset_dir.name}: {e}")
                 continue
+
+        # Aliases second: an alias never replaces another asset's name or an alias that
+        # an earlier asset already claimed (e.g. "cabinet" must stay the cabinet asset,
+        # not become cabinet small's alias).
+        alias_owner = {}
+        for alias, asset_name in pending_aliases:
+            if alias == asset_name:
+                continue
+            if alias in library:
+                owner = library[alias]["name"] if alias not in alias_owner else alias_owner[alias]
+                if owner != asset_name:
+                    print(f"Alias conflict: '{alias}' of '{asset_name}' ignored, already means '{owner}'")
+                continue
+            library[alias] = library[asset_name]
+            alias_owner[alias] = asset_name
         
         return library
     
@@ -219,15 +234,15 @@ class AssetAgent:
         Returns:
             Asset name if found, None otherwise
         """
-        # Try exact match first
-        object_name_lower = object_name.lower()
+        # Try exact match first ("cabinet_small" from a layout graph == asset "cabinet small")
+        object_name_lower = object_name.lower().replace("_", " ")
         # Check known assets
         for asset_name in self.known_assets.keys():
-            if asset_name.lower() == object_name_lower:
+            if asset_name.lower().replace("_", " ") == object_name_lower:
                 return asset_name
         # Check all discovered assets
         for asset_name in self.all_assets.keys():
-            if asset_name.lower() == object_name_lower:
+            if asset_name.lower().replace("_", " ") == object_name_lower:
                 return asset_name
         # If no exact match, use LLM semantic matching
         print(f"   No exact match for '{object_name}', trying semantic search...")

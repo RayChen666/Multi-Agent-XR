@@ -15,6 +15,8 @@ import {
   clearCommand,
   fillExample,
   getUserPosition,
+  getUserRotation,
+  watchUserPose,
 } from './commandBridge.js';
 import {
   initSttPhase1,
@@ -153,6 +155,10 @@ async function setupScene({ scene, camera, renderer, player, controllers }) {
   window.clearCommand = clearCommand;
   window.fillExample = fillExample;
   window.getUserPosition = getUserPosition;
+  window.getUserRotation = getUserRotation;
+  window.watchUserPose = watchUserPose;
+  // Debug while verifying user yaw: logs on every turn/move. watchUserPose(false) to stop.
+  watchUserPose(true);
   window.startListen = startListen;
   window.stopListen = stopListen;
   window.getDraftCommand = getDraftCommand;

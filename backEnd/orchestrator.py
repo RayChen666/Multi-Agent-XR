@@ -1,4 +1,5 @@
 import google.generativeai as genai
+import copy
 import json
 import os
 import time
@@ -16,6 +17,10 @@ from database import Database
 from state import MASState
 from backEnd.memory.conversationManager import ConversationManager
 from __init__  import Memory
+from skills.registry import get_registry
+from skills._common import SkillContext, placed_objects
+from tools.aabbCheck import check_room_bounds
+from tools.orientation import DEFAULT_USER_YAW
 
 class Orchestrator:
     """
@@ -47,7 +52,12 @@ class Orchestrator:
         self.code_agent = code_agent
         self.database = database
         self.verification_agent = verification_agent
-        self.user_position = user_position
+        # Default until the first command carries the headset pose: spawn-like pose facing
+        # -Z, i.e. yaw = π in tools/orientation.py's convention.
+        self.user_position = user_position or {
+            'x': 0, 'y': 0, 'z': 0,
+            'rotation': {'x': 0, 'y': DEFAULT_USER_YAW, 'z': 0},
+        }
         # Latest head-gaze snapshot (set per-request by main.py). Used by the
         # LanguageAgent to ground spatial deixis ("there", "on that"). Defaults
         # to an explicit "none" so downstream code always sees a valid shape.
@@ -58,14 +68,7 @@ class Orchestrator:
         self.conversation_history = {}
         self.last_result_state: Dict[str, Any] = {}
 
-        
-        # Default user position if not provided
-        # In case when the head track mode is not activated
-        if user_position is None:
-            user_position = {
-                'x': 0, 'y': 0, 'z': 0,
-                'rotation': {'x': 0, 'y': 0, 'z': 0}
-            }
+
 
     """Build the LangGraph workflow"""  
     def _build_graph(self) -> StateGraph:
@@ -146,15 +149,56 @@ class Orchestrator:
         else:  # Vague/Complex
             return "memory"
 
-    def _check_verification_result(self, state: MASState) -> Literal["execution_agent",  
+    def _check_verification_result(self, state: MASState) -> Literal["execution_agent",
                                                                      "increment_iteration",
                                                                      "end"]:
-        """Decide what to do based on verification result"""
+        """Route on the decision _verification_node already wrote into state."""
+        return state.get("next_step") or "end"
+
+    def _decide_next_step(self, state: MASState) -> Literal["execution_agent",
+                                                            "increment_iteration",
+                                                            "end"]:
+        """
+        Decide what to do based on verification result.
+        Runs inside the verification node: LangGraph drops state writes made in
+        conditional-edge functions, so error_message/success must be set here.
+        """
         verification = state.get("verification_result", {})
         has_collision = verification.get("has_collision", False)
         iteration_count = state.get("iteration_count", 0)
         max_iterations = state.get("max_iteration", 3)
-        
+        violations = state.get("constraint_violations") or []
+
+        if violations:
+            # With a collision, _verification_node already merged collision + violations here.
+            message = (verification.get("message") if has_collision else None) \
+                or "; ".join(v["message"] for v in violations)
+            if any(not v.get("fixable", True) for v in violations):
+                print(f"Constraint cannot be satisfied — stopping: {message}")
+                state["error_message"] = f"Unable to perform action: {message}"
+                state["success"] = False
+                return "end"
+            if iteration_count < max_iterations:
+                label = "Collision + constraint violated" if has_collision else "Constraint violated"
+                print(f"{label} - retrying ({iteration_count + 1}/{max_iterations}): {message}")
+                return "increment_iteration"
+            call = (state.get("parsed_command") or {}).get("skill") or {}
+            skill = get_registry().get(call.get("name"))
+            best = state.get("best_effort")
+            if skill and skill.accept_on_exhausted and best:
+                # Collision-free (violations are only checked then), just not a perfect match.
+                state["proposed_placement"] = best["placement"]
+                state["constraint_violations"] = best["violations"]
+                print(f"Max retries reached - executing closest attempt ({skill.name}, "
+                      f"{len(best['violations'])} violation(s))")
+                state["verification_result"] = {**state.get("verification_result", {}),
+                                                "valid": True, "warnings": best["violations"]}
+                return "execution_agent"
+            print(f"Max retries reached - giving up")
+            state["error_message"] = f"Unable to perform action: {message}"
+            state["success"] = False
+            return "end"
+
         if not has_collision:
             if verification.get("valid") is False:
                 print("Verification failed — stopping before execution")
@@ -242,6 +286,23 @@ class Orchestrator:
         return state
     
     
+    def _build_feedback(self, state: MASState, default_suggestion: str) -> Optional[Dict]:
+        """Retry context for the Scene Agent: collision pairs and/or skill constraint violations."""
+        if state.get("iteration_count", 0) == 0:
+            return None
+        collision_info = state.get("collision_info") or {}
+        violations = state.get("constraint_violations") or []
+        if not collision_info and not violations:
+            return None
+        feedback = {
+            "previous_attempt": state.get("proposed_placement") or {},
+            "colliding_pairs": collision_info.get("colliding_pairs", []),
+            "suggestion": collision_info.get("suggestion", default_suggestion),
+        }
+        if violations:
+            feedback["constraint_violations"] = violations
+        return feedback
+
     def _scene_node(self, state: MASState) -> MASState:
         """
         Scene Agent: Calculate spatial transformations
@@ -318,49 +379,49 @@ class Orchestrator:
             # Get feedback from previous iteration and determine which objects need
             # repositioning. On retry, only reposition the objects involved in the
             # detected collision; non-colliding objects keep their previous positions.
-            feedback = None
             preserved_objects = []
             objects_to_position = new_objects
 
-            if state.get("iteration_count", 0) > 0:
-                collision_info = state.get("collision_info")
-                if collision_info:
-                    colliding_pairs = collision_info.get("colliding_pairs", [])
-                    feedback = {
-                        "previous_attempt": state.get("proposed_placement"),
-                        "colliding_pairs": colliding_pairs,
-                        "suggestion": collision_info.get("suggestion", "Try alternative placement")
-                    }
+            feedback = self._build_feedback(state, "Try alternative placement")
+            if feedback:
+                colliding_pairs = feedback["colliding_pairs"]
 
-                    # Collect every object ID that appears in any collision pair
-                    # (both sides are equally candidates for repositioning).
+                # Collect every object ID that appears in any collision pair
+                # (both sides are equally candidates for repositioning).
+                colliding_ids = set()
+                for pair in colliding_pairs:
+                    colliding_ids.update(
+                        oid for oid in (pair.get("mover"), pair.get("anchor")) if oid
+                    )
+                # Objects out of the room must move too. A violation that names no object
+                # (skill postcondition) can involve any of them: reposition all.
+                violations = feedback.get("constraint_violations") or []
+                if any(not v.get("object_id") for v in violations):
                     colliding_ids = set()
-                    for pair in colliding_pairs:
-                        colliding_ids.update(
-                            oid for oid in (pair.get("mover"), pair.get("anchor")) if oid
-                        )
+                else:
+                    colliding_ids.update(v["object_id"] for v in violations)
 
-                    if colliding_ids:
-                        prev_complete = (state.get("proposed_placement") or {}).get("complete_objects", [])
-                        prev_by_id = {obj["id"]: obj for obj in prev_complete}
+                if colliding_ids:
+                    prev_complete = (state.get("proposed_placement") or {}).get("complete_objects", [])
+                    prev_by_id = {obj["id"]: obj for obj in prev_complete}
 
-                        preserved_objects = [
-                            prev_by_id[obj["id"]]
-                            for obj in new_objects
-                            if obj["id"] not in colliding_ids and obj["id"] in prev_by_id
-                        ]
-                        objects_to_position = [
-                            obj for obj in new_objects
-                            if obj["id"] in colliding_ids
-                        ]
+                    preserved_objects = [
+                        prev_by_id[obj["id"]]
+                        for obj in new_objects
+                        if obj["id"] not in colliding_ids and obj["id"] in prev_by_id
+                    ]
+                    objects_to_position = [
+                        obj for obj in new_objects
+                        if obj["id"] in colliding_ids
+                    ]
 
-                        # Safety: if filtering produced nothing to reposition, reset
-                        if not objects_to_position:
-                            objects_to_position = new_objects
-                            preserved_objects = []
-                        elif preserved_objects:
-                            print(f"   Preserving {len(preserved_objects)} non-colliding object(s), "
-                                  f"repositioning {len(objects_to_position)}")
+                    # Safety: if filtering produced nothing to reposition, reset
+                    if not objects_to_position:
+                        objects_to_position = new_objects
+                        preserved_objects = []
+                    elif preserved_objects:
+                        print(f"   Preserving {len(preserved_objects)} non-colliding object(s), "
+                              f"repositioning {len(objects_to_position)}")
 
             object_details = [
                 {
@@ -445,19 +506,12 @@ class Orchestrator:
                 "action": "add_multiple" if len(complete_objects) > 1 else "add",
                 "complete_objects": complete_objects
             }
+            if spatial_updates.get("relaxed_edges"):
+                state["proposed_placement"]["relaxed_edges"] = spatial_updates["relaxed_edges"]
 
         # CASE 2: normal placement action
-        else: 
-            feedback = None
-            if state.get("iteration_count", 0) > 0:
-                collision_info = state.get("collision_info", {})
-                if collision_info:
-                    feedback = {
-                        "previous_attempt": state.get("proposed_placement", {}),
-                        #"collision_with": collision_info.get("colliding_objects", []),
-                        "colliding_pairs": collision_info.get("colliding_pairs", []),
-                        "suggestion": collision_info.get("suggestion", "Try alternative placement")
-                    }
+        else:
+            feedback = self._build_feedback(state, "Try alternative placement")
 
             spatial_updates = self.scene_agent.calculate_spatial_transformation(
                 parsed_command,
@@ -504,6 +558,86 @@ class Orchestrator:
         
 
     def _verification_node(self, state: MASState) -> MASState:
+        """
+        Verification: collision/format checks, then room bounds and the selected
+        skill's postcondition, then the routing decision.
+        """
+        state = self._check_placement(state)
+
+        state["constraint_violations"] = []
+        verification = state.get("verification_result") or {}
+        has_collision = bool(verification.get("has_collision"))
+        # valid=False without a collision = format / removal-rule failure: nothing to measure.
+        if has_collision or verification.get("valid") is not False:
+            # Every problem in one pass (collision + room bounds + skill constraint), so a
+            # retry gets told all of them instead of fixing one and tripping over the next.
+            violations = self._check_room_bounds(state) + self._check_skill_postcondition(state)
+            if violations:
+                state["constraint_violations"] = violations
+                # Remember the closest collision-free attempt for best-effort skills. Deep copy:
+                # later Scene iterations mutate the same new-object dicts in place. Never an
+                # out-of-room one: room bounds are a hard limit, not a preference.
+                best = state.get("best_effort") or {}
+                in_room = not any(v.get("kind") == "room_bounds" for v in violations)
+                if not has_collision and in_room and (not best or len(violations) < len(best.get("violations", []))):
+                    state["best_effort"] = {"placement": copy.deepcopy(state.get("proposed_placement")),
+                                            "violations": violations}
+                messages = [v["message"] for v in violations]
+                if has_collision:
+                    messages.insert(0, verification.get("message", "collision detected"))
+                state["verification_result"] = {
+                    **verification,
+                    "valid": False,
+                    "message": "; ".join(messages),
+                    "constraint_violations": violations,
+                }
+
+        state["next_step"] = self._decide_next_step(state)
+        return state
+
+    def _skill_context(self, state: MASState) -> SkillContext:
+        selected = state.get("selected_assets") or {}
+        new_objects = selected.get("new_objects") or (
+            [selected["new_object"]] if selected.get("new_object") else [])
+        return SkillContext(
+            scene_state=state.get("scene_state") or {},
+            room_bounds=(state.get("scene_state") or {}).get("metadata", {}).get("bounds"),
+            new_objects=new_objects if selected.get("needs_positioning") else [],
+            user_position=self.user_position,
+            gaze_target=(state.get("parsed_command") or {}).get("resolved_spatial_target"),
+        )
+
+    def _check_room_bounds(self, state: MASState) -> List[Dict]:
+        """Every placed/moved object must stay inside the room (tools.aabbCheck.check_room_bounds)."""
+        placement = state.get("proposed_placement") or {}
+        ctx = self._skill_context(state)
+        if not ctx.room_bounds or placement.get("action") == "remove":
+            return []
+        violations = check_room_bounds(placed_objects(placement, ctx), ctx.room_bounds)
+        for v in violations:
+            print(f"   [ROOM BOUNDS] {v['message']}")
+        return violations
+
+    def _check_skill_postcondition(self, state: MASState) -> List[Dict]:
+        """Run the selected skill's postcondition against the proposed placement."""
+        placement = state.get("proposed_placement") or {}
+        call = (state.get("parsed_command") or {}).get("skill")
+        skill = get_registry().get((call or {}).get("name"))
+        if not skill or placement.get("action") == "remove":
+            return []
+        try:
+            violations = skill.postcondition(call["args"], placement, self._skill_context(state))
+        except Exception as e:
+            # A broken postcondition must not block execution of a collision-free placement.
+            print(f"   [SKILL {skill.name}] postcondition error, skipping: {e}")
+            return []
+        if violations:
+            print(f"   [SKILL {skill.name}] {len(violations)} constraint violation(s)")
+        else:
+            print(f"   [SKILL {skill.name}] postcondition satisfied")
+        return violations
+
+    def _check_placement(self, state: MASState) -> MASState:
         """
         Verification Agent: Check for collisions and validate placement
         """
@@ -915,6 +1049,19 @@ class Orchestrator:
         state["memory_context"] = memory_context
         print(f"Memory context ready — target: {memory_context['target_room_type']}\n")
 
+        # The layout graph drives placement: activate the graph_layout skill with it
+        # (not LLM-selectable — its args come from ImageAgent, not the user's words).
+        semantic_layout = memory_context.get("semantic_layout") or {}
+        layout_graph = semantic_layout.get("layout_graph") or {}
+        if layout_graph.get("edges") and state.get("parsed_command") is not None:
+            state["parsed_command"]["skill"] = get_registry().validate_call(
+                {"name": "graph_layout",
+                 "args": {"edges": layout_graph["edges"],
+                          "anchor_object": semantic_layout.get("anchor_object")}},
+                source="memory",
+            )
+            print(f"   Skill activated: {get_registry().describe(state['parsed_command']['skill'])}\n")
+
 
 
         return state
@@ -1037,6 +1184,9 @@ class Orchestrator:
             "proposed_placement": None,
             "verification_result": None,
             "collision_info": None,
+            "constraint_violations": None,
+            "best_effort": None,
+            "next_step": None,
             "scene_state": self.database.scene_data,
             "memory_context": None,
             "iteration_count": 0,
@@ -1045,7 +1195,7 @@ class Orchestrator:
             "error_message": None,
             "final_actions": None,
         }
-        
+
         # Run the workflow
         try:
             final_state = self.app.invoke(initial_state)

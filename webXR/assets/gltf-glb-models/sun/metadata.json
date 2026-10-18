@@ -10,7 +10,7 @@
   "properties": {
     "movable": true,
     "interactive": true,
-    "canSitOn": true,
+    "canSitOn": false,
     "weight": "light"
   },
   "typical_dimensions": {
@@ -24,10 +24,10 @@
     "z": 0
   },
   "aliases": [
-    "seat",
-    "dining chair"
+    "sun decoration",
+    "sun ornament"
   ],
-  "description": "A standard dining chair suitable for seating at tables",
+  "description": "A decorative sun ornament",
   "collision": {
     "width": 0.902,
     "height": 1.021,

@@ -9,10 +9,13 @@ from dotenv import load_dotenv
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.gridLayout import grid_layout_positions
-from tools.aroundPlacement import around_placement_positions
-from tools.facingPlacement import facing_placement
-from tools.graphLayout import layout_graph_positions
-from tools.distancePlacement import distance_placement
+from skills.registry import get_registry
+from skills._common import SkillContext, resolve_anchor
+from tools.orientation import (DEFAULT_USER_YAW, direction_axis, facing_angle,
+                               user_direction_vector, user_yaw)
+from tools.aabbCheck import build_aabb, world_collision
+from tools import spacing
+from skills.facing_placement.skill import infer_facing_phrase
 
 class SceneAgent:
     """
@@ -27,7 +30,7 @@ class SceneAgent:
         # Google Gemini Studio initialize
         load_dotenv(Path(__file__).resolve().parents[2] / ".env")
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        self.model = genai.GenerativeModel('gemini-4-argon')
         self.use_llm_reasoning = use_llm_reasoning
 
     def calculate_spatial_transformation(self,
@@ -86,11 +89,11 @@ class SceneAgent:
                 "reasoning": str
             }
         """
-        # Default user position if not provided
+        # Default user position if not provided (facing -Z = yaw π, tools/orientation.py)
         if user_position is None:
             user_position = {
                 'x': 0, 'y': 0, 'z': 0,
-                'rotation': {'x': 0, 'y': 0, 'z': 0}
+                'rotation': {'x': 0, 'y': DEFAULT_USER_YAW, 'z': 0}
             }
         
         print(f"\nScene Agent processing:")
@@ -98,6 +101,7 @@ class SceneAgent:
         print(f"   Command Type: {parsed_command.get('command_type', 'N/A')}")
         print(f"   Objects: {parsed_command.get('involved_objects', [])}")
         print(f"   Spatial Concepts: {parsed_command.get('spatial_concepts', [])}")
+        print(f"   Skill: {get_registry().describe(parsed_command.get('skill'))}")
         
         if feedback:
             print(f"   Iteration with feedback: {feedback.get('suggestion', 'N/A')}")
@@ -112,7 +116,7 @@ class SceneAgent:
             room_bounds,
             anchor_object,
         )
-        return self._apply_facing_rotation(result, parsed_command, scene_state)
+        return self._apply_facing_rotation(result, parsed_command, scene_state, user_position)
     
     def _compute_rotation(self,
                       parsed_command: Dict,
@@ -725,7 +729,8 @@ Rules:
             return {"candidate_ids": [], "confidence": None, "reasoning": ""}
 
     
-    def _apply_facing_rotation(self, result: Dict, parsed_command: Dict, scene_state: Dict) -> Dict:
+    def _apply_facing_rotation(self, result: Dict, parsed_command: Dict, scene_state: Dict,
+                               user_position: Optional[Dict] = None) -> Dict:
         """
         Post-process any placement result: if a 'facing X' target is detected,
         recompute each object's rotation_y from its final position toward the target.
@@ -734,7 +739,7 @@ Rules:
         """
         if not result:
             return result
-        target = self._detect_facing_target(parsed_command, scene_state)
+        target = self._detect_facing_target(parsed_command, scene_state, user_position)
         if not target:
             return result
 
@@ -742,7 +747,7 @@ Rules:
         tz = float(target.get('position', {}).get('z', 0))
 
         def _rot(px, pz) -> Dict:
-            return {'x': 0, 'y': round(math.atan2(tx - float(px), tz - float(pz)), 4), 'z': 0}
+            return {'x': 0, 'y': round(facing_angle(float(px), float(pz), tx, tz), 4), 'z': 0}
 
         if 'objects' in result:
             for obj in result['objects']:
@@ -754,329 +759,20 @@ Rules:
 
         return result
 
-    def _detect_facing_target(self, parsed_command: Dict, scene_state: Dict) -> Optional[Dict]:
-        """Return the scene object that 'facing X' refers to, or None."""
-        prompt = parsed_command.get('original_prompt', '').lower()
-        concepts = ' '.join(parsed_command.get('spatial_concepts', [])).lower()
-        text = prompt + ' ' + concepts
-
-        m = re.search(r'(?:facing|to\s+face|faces?)\s+(?:the\s+)?(\w+)', text)
-        if not m:
-            return None
-
-        target_type = m.group(1).lower()
-        if target_type.endswith('s') and not target_type.endswith('ss') and len(target_type) > 2:
-            target_type = target_type[:-1]
-
-        for obj in scene_state.get('objects', []):
-            name = obj.get('name', '').lower()
-            cat = obj.get('category', '').lower()
-            oid = obj.get('id', '').lower()
-            if target_type in name or target_type == cat or target_type == oid:
-                return obj
-
-        return None
-
-    def _try_facing_placement(
-        self,
-        parsed_command: Dict,
-        scene_state: Dict,
-        room_bounds: Optional[Dict],
-        new_objects_to_position: Optional[List[Dict]],
-    ) -> Optional[Dict]:
-        """Deterministic facing-placement. Returns result dict or None if not applicable."""
-        target = self._detect_facing_target(parsed_command, scene_state)
-        if not target:
-            return None
-
-        target_id = target.get('id')
-
-        if new_objects_to_position:
-            movers = new_objects_to_position
+    def _detect_facing_target(self, parsed_command: Dict, scene_state: Dict,
+                              user_position: Optional[Dict] = None) -> Optional[Dict]:
+        """
+        Return the scene object that 'facing X' refers to, or None. Checked even when
+        another skill was chosen ("1m left of the desk, facing the window").
+        """
+        skill_call = parsed_command.get('skill') or {}
+        if skill_call.get('name') == 'facing_placement':
+            phrase = skill_call['args']['facing']
         else:
-            involved = parsed_command.get('involved_objects', [])
-            movers = []
-            seen: set = set()
-            for token in involved:
-                t = token.lower()
-                if t.endswith('s') and not t.endswith('ss') and len(t) > 2:
-                    t = t[:-1]
-                for obj in scene_state.get('objects', []):
-                    oid = obj.get('id')
-                    if oid in seen or oid == target_id:
-                        continue
-                    name = obj.get('name', '').lower()
-                    cat = obj.get('category', '').lower()
-                    obj_id = str(oid).lower()
-                    if t in name or t == cat or t == obj_id:
-                        movers.append(obj)
-                        seen.add(oid)
-
-        if not movers:
+            phrase = infer_facing_phrase(parsed_command)
+        if not phrase:
             return None
-
-        target_name = target.get('name', target_id)
-        is_add = bool(new_objects_to_position)
-        tx = float(target.get('position', {}).get('x', 0))
-        tz = float(target.get('position', {}).get('z', 0))
-        objects_out = []
-
-        for obj in movers:
-            if is_add:
-                # New object: place in front of target then face it
-                pos = facing_placement(
-                    target=target,
-                    mover_collision=obj.get('collision'),
-                    room_bounds=room_bounds,
-                )
-                objects_out.append({
-                    'object_id': obj['id'],
-                    'name': obj.get('name', ''),
-                    'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
-                    'rotation': {'x': 0, 'y': pos['rotation_y'], 'z': 0},
-                    'action': 'place',
-                })
-            else:
-                # Existing object: keep current position, only update rotation
-                cur_pos = obj.get('position', {})
-                px = float(cur_pos.get('x', 0))
-                pz = float(cur_pos.get('z', 0))
-                rotation_y = math.atan2(tx - px, tz - pz)
-                objects_out.append({
-                    'object_id': obj['id'],
-                    'name': obj.get('name', ''),
-                    'position': cur_pos,
-                    'rotation': {'x': 0, 'y': round(rotation_y, 4), 'z': 0},
-                    'action': 'rotate',
-                })
-
-        print(f"   Using deterministic facing-placement: {len(movers)} objects facing '{target_name}'")
-        reasoning = f"{'Placed' if is_add else 'Rotated'} facing {target_name}"
-        if len(objects_out) == 1:
-            result = objects_out[0]
-            result['reasoning'] = reasoning
-            return result
-        return {'objects': objects_out, 'reasoning': reasoning}
-
-    def _detect_around_anchor(self, parsed_command: Dict, scene_state: Dict) -> Optional[Dict]:
-        """Return the scene object that 'around X' refers to, or None."""
-        prompt = parsed_command.get('original_prompt', '').lower()
-        concepts = ' '.join(parsed_command.get('spatial_concepts', [])).lower()
-        text = prompt + ' ' + concepts
-
-        if 'around' not in text:
-            return None
-
-        m = re.search(r'around\s+(?:the\s+)?(\w+)', text)
-        if not m:
-            return None
-
-        anchor_type = m.group(1).lower()
-        if anchor_type.endswith('s') and not anchor_type.endswith('ss') and len(anchor_type) > 2:
-            anchor_type = anchor_type[:-1]
-
-        for obj in scene_state.get('objects', []):
-            name = obj.get('name', '').lower()
-            cat = obj.get('category', '').lower()
-            oid = obj.get('id', '').lower()
-            if anchor_type in name or anchor_type == cat or anchor_type == oid:
-                return obj
-
-        return None
-
-    def _try_around_placement(
-        self,
-        parsed_command: Dict,
-        scene_state: Dict,
-        room_bounds: Optional[Dict],
-        new_objects_to_position: Optional[List[Dict]],
-    ) -> Optional[Dict]:
-        """
-        Deterministic around-placement. Returns result dict or None if not applicable.
-        Only runs on the first attempt (no feedback) because positions are always identical.
-        """
-        anchor = self._detect_around_anchor(parsed_command, scene_state)
-        if not anchor:
-            return None
-
-        anchor_id = anchor.get('id')
-
-        if new_objects_to_position:
-            movers = new_objects_to_position
-        else:
-            involved = parsed_command.get('involved_objects', [])
-            movers = []
-            seen: set = set()
-            for token in involved:
-                t = token.lower()
-                if t.endswith('s') and not t.endswith('ss') and len(t) > 2:
-                    t = t[:-1]
-                for obj in scene_state.get('objects', []):
-                    oid = obj.get('id')
-                    if oid in seen or oid == anchor_id:
-                        continue
-                    name = obj.get('name', '').lower()
-                    cat = obj.get('category', '').lower()
-                    obj_id = str(oid).lower()
-                    if t in name or t == cat or t == obj_id:
-                        movers.append(obj)
-                        seen.add(oid)
-
-        if not movers:
-            return None
-
-        positions = around_placement_positions(movers, anchor, room_bounds)
-        if not positions:
-            return None
-
-        is_add = bool(new_objects_to_position)
-        objects_out = []
-        for obj, pos in zip(movers, positions):
-            objects_out.append({
-                'object_id': obj['id'],
-                'name': obj.get('name', ''),
-                'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
-                'rotation': {'x': 0, 'y': pos['rotation_y'], 'z': 0},
-                'action': 'place' if is_add else 'move',
-            })
-
-        anchor_name = anchor.get('name', anchor_id)
-        print(f"   Using deterministic around-placement: {len(movers)} objects around '{anchor_name}'")
-        return {
-            'objects': objects_out,
-            'reasoning': f"Arranged {len(movers)} objects evenly around {anchor_name}",
-        }
-
-    def _detect_distance_constraint(self, parsed_command: Dict, scene_state: Dict) -> Optional[Dict]:
-        """
-        Parse 'N meters back/front/left/right of X' style commands, e.g.
-        "move the sink 1.5 meters back of the table". Returns
-        {'distance': float, 'direction': str, 'anchor': dict} or None.
-        """
-        prompt = parsed_command.get('original_prompt', '').lower()
-        concepts = ' '.join(parsed_command.get('spatial_concepts', [])).lower()
-        text = prompt + ' ' + concepts
-
-        m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:meters?|metres?|m)\b\s*(?:to\s+the\s+)?'
-            r'(in front of|front of|back of|behind|left of|right of)\s+(?:the\s+)?(\w+)',
-            text,
-        )
-        if not m:
-            return None
-
-        distance = float(m.group(1))
-        direction_map = {
-            'in front of': 'front',
-            'front of': 'front',
-            'back of': 'back',
-            'behind': 'back',
-            'left of': 'left',
-            'right of': 'right',
-        }
-        direction = direction_map.get(m.group(2))
-        if not direction:
-            return None
-
-        anchor_type = m.group(3).lower()
-        if anchor_type.endswith('s') and not anchor_type.endswith('ss') and len(anchor_type) > 2:
-            anchor_type = anchor_type[:-1]
-
-        anchor = None
-        for obj in scene_state.get('objects', []):
-            name = obj.get('name', '').lower()
-            cat = obj.get('category', '').lower()
-            oid = obj.get('id', '').lower()
-            if anchor_type in name or anchor_type == cat or anchor_type == oid:
-                anchor = obj
-                break
-        if not anchor:
-            return None
-
-        return {'distance': distance, 'direction': direction, 'anchor': anchor}
-
-    def _try_distance_placement(
-        self,
-        parsed_command: Dict,
-        scene_state: Dict,
-        room_bounds: Optional[Dict],
-        new_objects_to_position: Optional[List[Dict]],
-    ) -> Optional[Dict]:
-        """
-        Deterministic edge-to-edge distance placement. Tracks the mover's and
-        anchor's bounding boxes (via tools.distancePlacement, which builds AABBs
-        from collision width/height/depth + offset) and solves for the position
-        where abs(bound_mover - bound_anchor) equals the requested distance.
-        Returns None if no distance constraint is detected in the command.
-        """
-        constraint = self._detect_distance_constraint(parsed_command, scene_state)
-        if not constraint:
-            return None
-
-        anchor = constraint['anchor']
-        anchor_id = anchor.get('id')
-
-        if new_objects_to_position:
-            movers = new_objects_to_position
-        else:
-            involved = parsed_command.get('involved_objects', [])
-            movers = []
-            seen: set = set()
-            for token in involved:
-                t = token.lower()
-                if t.endswith('s') and not t.endswith('ss') and len(t) > 2:
-                    t = t[:-1]
-                for obj in scene_state.get('objects', []):
-                    oid = obj.get('id')
-                    if oid in seen or oid == anchor_id:
-                        continue
-                    name = obj.get('name', '').lower()
-                    cat = obj.get('category', '').lower()
-                    obj_id = str(oid).lower()
-                    if t in name or t == cat or t == obj_id:
-                        movers.append(obj)
-                        seen.add(oid)
-
-        if not movers:
-            return None
-
-        is_add = bool(new_objects_to_position)
-        objects_out = []
-        for obj in movers:
-            try:
-                pos = distance_placement(
-                    mover=obj,
-                    anchor=anchor,
-                    distance=constraint['distance'],
-                    direction=constraint['direction'],
-                    room_bounds=room_bounds,
-                )
-            except ValueError as e:
-                print(f"   [DISTANCE] skipped {obj.get('id')}: {e}")
-                continue
-
-            rotation = {'x': 0, 'y': 0, 'z': 0} if is_add else obj.get('rotation', {'x': 0, 'y': 0, 'z': 0})
-            objects_out.append({
-                'object_id': obj['id'],
-                'name': obj.get('name', ''),
-                'position': pos,
-                'rotation': rotation,
-                'action': 'place' if is_add else 'move',
-            })
-
-        if not objects_out:
-            return None
-
-        anchor_name = anchor.get('name', anchor_id)
-        print(f"   Using deterministic distance-placement: {len(objects_out)} object(s) "
-              f"{constraint['distance']}m {constraint['direction']} of '{anchor_name}'")
-        reasoning = f"Placed {constraint['distance']}m {constraint['direction']} of {anchor_name} (edge-to-edge)"
-
-        if len(objects_out) == 1:
-            result = objects_out[0]
-            result['reasoning'] = reasoning
-            return result
-        return {'objects': objects_out, 'reasoning': reasoning}
+        return resolve_anchor(phrase, SkillContext(scene_state=scene_state, user_position=user_position))
 
     def _grid_layout_positions(self, objects: List[Dict], room_bounds: Dict, gap: float = 0.15) -> List[Dict]:
         return grid_layout_positions(objects, room_bounds, gap)
@@ -1141,51 +837,22 @@ Rules:
                                anchor_object: Optional[str] = None,
                                ) -> Dict:
 
-        # Deterministic spatial shortcuts (first attempt only — positions are always identical).
-        if not feedback:
-            distance_result = self._try_distance_placement(
-                parsed_command, scene_state, room_bounds, new_objects_to_position
-            )
-            if distance_result:
-                return distance_result
+        skill = get_registry().get((parsed_command.get('skill') or {}).get('name'))
 
-            facing_result = self._try_facing_placement(
-                parsed_command, scene_state, room_bounds, new_objects_to_position
-            )
-            if facing_result:
-                return facing_result
-
-            around_result = self._try_around_placement(
-                parsed_command, scene_state, room_bounds, new_objects_to_position
-            )
-            if around_result:
-                return around_result
-
-            # Graph-layout resolver: converts ImageAgent layout_graph edges directly
-            # into collision-safe coordinates — no LLM needed for the complex route.
-            if layout_graph and new_objects_to_position and room_bounds:
-                graph_positions = layout_graph_positions(
-                    nodes_to_place=new_objects_to_position,
-                    edges=layout_graph.get('edges', []),
-                    anchor_object=anchor_object,
-                    room_bounds=room_bounds,
-                )
-                if graph_positions and len(graph_positions) == len(new_objects_to_position):
-                    print(f"   Using deterministic graph layout for {len(new_objects_to_position)} objects")
-                    objects_out = []
-                    for obj in new_objects_to_position:
-                        pos = graph_positions[obj['id']]
-                        objects_out.append({
-                            'object_id': obj['id'],
-                            'name': obj.get('name', ''),
-                            'position': {'x': pos['x'], 'y': pos['y'], 'z': pos['z']},
-                            'rotation': {'x': 0, 'y': round(pos.get('rotation_y', 0.0), 4), 'z': 0},
-                            'action': 'place',
-                        })
-                    return {
-                        'objects': objects_out,
-                        'reasoning': 'Deterministic graph-layout resolved from ImageAgent layout_graph',
-                    }
+        # Level-3 skill: the LanguageAgent picked (or regex-inferred) a deterministic tool
+        # and filled its args. First attempt only — positions are always identical.
+        if skill and not feedback:
+            ctx = SkillContext(scene_state=scene_state, room_bounds=room_bounds,
+                               new_objects=new_objects_to_position or [], user_position=user_position,
+                               gaze_target=parsed_command.get('resolved_spatial_target'))
+            try:
+                skill_result = skill.run(parsed_command['skill']['args'], ctx)
+            except Exception as e:
+                print(f"   [SKILL {skill.name}] failed: {e}")
+                skill_result = None
+            if skill_result:
+                return skill_result
+            print(f"   [SKILL {skill.name}] not applicable, falling back to LLM reasoning")
 
         # If feedback exists and every collision pair is between proposed objects,
         # the LLM has already failed to solve the layout numerically — use deterministic grid.
@@ -1207,17 +874,49 @@ Rules:
                         })
                     return {'objects': objects_out}
 
-        # LLM context
-        scene_objects = [
-            {
+        # LLM context. `sides` is computed here so the LLM never has to derive
+        # "in front of X" itself (convention: tools.orientation.direction_axis).
+        def _sides(obj: Dict) -> Dict[str, str]:
+            out = {}
+            for d in ('front', 'back', 'left', 'right'):
+                axis, sign = direction_axis(obj, d)
+                out[d] = f"{'+' if sign > 0 else '-'}{axis.upper()}"
+            return out
+
+        # User-relative frame for rule 6, from the headset yaw the frontend sends.
+        def _vec_label(v) -> str:
+            vx, vz = v
+            axis = f"{'+' if vx > 0 else '-'}X" if abs(vx) > abs(vz) else f"{'+' if vz > 0 else '-'}Z"
+            return f"{axis} (x {vx:+.2f}, z {vz:+.2f})"
+
+        yaw = user_yaw(user_position)
+        user_frame = {d: _vec_label(user_direction_vector(yaw, d))
+                      for d in ('forward', 'backward', 'left', 'right')}
+        user_frame_text = ", ".join(f"{d} = {v}" for d, v in user_frame.items())
+
+        def _scene_entry(obj: Dict) -> Dict:
+            entry = {
                 'id': obj['id'],
                 'name': obj['name'],
                 'position': obj['position'],
                 'rotation': obj['rotation'],
-                'category': obj.get('category', 'unknown')
+                'category': obj.get('category', 'unknown'),
+                'sides': _sides(obj),
             }
-            for obj in scene_state.get('objects', [])
-        ]
+            col = obj.get('collision')
+            if col and obj.get('position'):
+                # Edge-based rules need sizes and the real box (position + offset);
+                # "on X" needs X's top surface height.
+                # World-axis values: a rotated object's footprint and offset rotate with it.
+                lo, hi = build_aabb(obj)
+                wc = world_collision(obj)
+                entry['footprint'] = {'width_x': round(wc['width'], 3), 'depth_z': round(wc['depth'], 3)}
+                entry['center_offset'] = {'x': round(wc['offset']['x'], 3), 'z': round(wc['offset']['z'], 3)}
+                entry['bbox'] = {'x': [round(lo[0], 3), round(hi[0], 3)], 'z': [round(lo[2], 3), round(hi[2], 3)]}
+                entry['top_y'] = round(hi[1], 3)
+            return entry
+
+        scene_objects = [_scene_entry(obj) for obj in scene_state.get('objects', [])]
         new_objects_section = ""
         if new_objects_to_position:
             new_objects_info = []
@@ -1232,18 +931,20 @@ Rules:
                 if col and isinstance(col, dict):
                     w = col.get('width', 0)
                     d = col.get('depth', 0)
+                    off = col.get('offset') or {}
                     entry['collision_footprint'] = {
                         'width_x': round(w, 3),
                         'depth_z': round(d, 3),
-                        'min_center_spacing_x': round(w + 0.1, 3),
-                        'min_center_spacing_z': round(d + 0.1, 3),
+                        'center_offset': {'x': round(off.get('x', 0), 3), 'z': round(off.get('z', 0), 3)},
+                        'min_center_spacing_x': round(w + spacing.MIN_CLEARANCE, 3),
+                        'min_center_spacing_z': round(d + spacing.MIN_CLEARANCE, 3),
                     }
                 new_objects_info.append(entry)
 
             new_objects_section = f"""
 
             NEWLY CREATED OBJECTS (need position/rotation):
-            {json.dumps(new_objects_info, indent=2)}
+            {json.dumps(new_objects_info, separators=(',', ':'))}
 
             IMPORTANT: These objects have been created but have no position/rotation yet.
             You MUST provide position and rotation for ALL of these objects.
@@ -1266,7 +967,7 @@ Rules:
         
         # Build feedback context if this is an iteration
         feedback_context = ""
-        if feedback:
+        if feedback and feedback.get('colliding_pairs'):
             collision_pairs = feedback.get('colliding_pairs', [])
 
             # Use the pre-computed safe positions from aabbCheck (edge-based, exact).
@@ -1295,6 +996,30 @@ Rules:
             - If placing multiple objects of the same type, ensure they also don't collide with each other.
             """
 
+        if feedback and feedback.get('constraint_violations'):
+            violation_lines = "".join(f"\n    - {v['message']}" for v in feedback['constraint_violations'])
+            feedback_context += f"""
+
+            ⚠️ PREVIOUS ATTEMPT VIOLATED THESE CONSTRAINTS (room bounds / the user's spatial request):
+            {violation_lines}
+
+            Fix these while still avoiding collisions. Where a corrected position is given, use it.
+            """
+
+        # Level-2 skill disclosure: the selected skill's full rules, whenever the LLM has to
+        # do the skill's job itself (tool not applicable, or retry after verification failure).
+        skill_context = ""
+        if skill:
+            skill_args = json.dumps(parsed_command['skill']['args'])
+            if len(skill_args) > 500:  # e.g. graph_layout's edge list, already shown in full above
+                skill_args = "(see above)"
+            skill_context = f"""
+
+            ACTIVE SKILL: {skill.name}  args={skill_args}
+            Your answer must still satisfy this skill's constraint:
+            {skill.body}
+            """
+
 
         # Build bounds context — always inject when available (all routes)
         bounds_context = ""
@@ -1304,28 +1029,25 @@ Rules:
             min_z = room_bounds["min"]["z"]
             max_z = room_bounds["max"]["z"]
             min_y = room_bounds["min"]["y"]
+            margin = spacing.ROOM_MARGIN
+            inset_next = spacing.WALL_INSET['next_to']
+            inset_close = spacing.WALL_INSET['close_to']
             bounds_context = f"""
 
-            ROOM BOUNDS (hard limits — ALL objects MUST be placed strictly within these):
-            - Left wall:  x = {min_x}  → place objects at x ≥ {min_x + 0.1:.2f}
-            - Right wall: x = {max_x}  → place objects at x ≤ {max_x - 0.1:.2f}
-            - Back wall:  z = {min_z}  → place objects at z ≥ {min_z + 0.1:.2f}
-            - Front wall: z = {max_z}  → place objects at z ≤ {max_z - 0.1:.2f}
-            - Floor Y: {min_y}
+            ROOM BOUNDS (hard limits):
+            - Left wall x = {min_x}, right wall x = {max_x}, back wall z = {min_z}, front wall z = {max_z}, floor y = {min_y}
+            - Every object's BOUNDING BOX must stay inside, its edges at least {margin} m from each wall.
+              With box center cx = x + center_offset.x, cz = z + center_offset.z:
+              cx - width_x/2 ≥ {min_x + margin:.2f},  cx + width_x/2 ≤ {max_x - margin:.2f}
+              cz - depth_z/2 ≥ {min_z + margin:.2f},  cz + depth_z/2 ≤ {max_z - margin:.2f}
 
-            INWARD OFFSET RULE:
-            - "attach to wall" / "against wall" / "next to wall" → offset 0.1–0.2m inward from wall
-            - "close to wall" / "near wall"                      → offset 0.2–0.3m inward from wall
-            - General placement (not wall-specific)              → offset 0.3–0.5m inward from wall
-
-            Examples given these bounds:
-            object attached to left wall        → x = {min_x + 0.15:.2f}
-            object attached to back wall        → z = {min_z + 0.15:.2f}
-            object close to back wall           → z = {min_z + 0.25:.2f}
-            object at front-left corner         → x = {min_x + 0.15:.2f}, z = {max_z - 0.15:.2f}
-            object at front-right corner        → x = {max_x - 0.15:.2f}, z = {max_z - 0.15:.2f}
-            object at back-left corner          → x = {min_x + 0.15:.2f}, z = {min_z + 0.15:.2f}
-            object at back-right corner         → x = {max_x - 0.15:.2f}, z = {min_z + 0.15:.2f}
+            WALL OFFSET RULE (distance from the object's EDGE to the wall):
+            - "against" / "attached to" / "next to" the wall → {inset_next} m
+            - "close to" / "near" the wall                   → {inset_close} m
+            - So the BOX CENTER goes at wall ± (offset + half the object's size), and position = box center − center_offset.
+              e.g. depth_z = 0.6, center_offset.z = 0.2, against the back wall:
+                   box center z = {min_z} + {inset_next} + 0.3 = {min_z + inset_next + 0.3:.2f}  →  position z = {min_z + inset_next + 0.3:.2f} − 0.2 = {min_z + inset_next + 0.1:.2f}
+            - Corner = against both of that corner's walls (e.g. front right = max X and max Z).
             """
 
         # Build layout graph context — complex route only
@@ -1339,16 +1061,11 @@ Rules:
             Each edge defines how two objects should be positioned relative to each other or to room boundaries.
             Follow these relationships as closely as possible when assigning positions.
 
-            {json.dumps(layout_graph, indent=2)}
+            {json.dumps(layout_graph, separators=(',', ':'))}
 
-            GRAPH INTERPRETATION RULES:
-            - "next_to" with a side (e.g., "west") → place object on that side of the target, 0.1–0.2m offset inward from wall
-            - "facing" → object should be oriented toward the target (update Y rotation accordingly)
-            - "close_to" with a side → place object near that side, 0.2–0.3m offset
-            - "at_corner" with a corner key → place at the named room corner, offset inward 0.1–0.2m on both axes
-            - IMPORTANT: These graph edges OVERRIDE generic placement heuristics.
+            How to read the edges: see ACTIVE SKILL: graph_layout below.
+            IMPORTANT: These graph edges OVERRIDE generic placement heuristics.
             Do not apply default assumptions (e.g. "chair goes in front of desk") when a graph edge says otherwise.
-            - Wall side mapping: back_wall=most negative Z, front_wall=most positive Z, left_wall=most negative X, right_wall=most positive X
 
             ANCHOR RULE: Place '{anchor}' against its designated wall first, then derive all other positions from graph edges relative to it.
             """
@@ -1360,90 +1077,38 @@ Rules:
             POSITIONING NEW OBJECTS:
             You are positioning {len(new_objects_to_position)} NEW object(s) to add to the scene:
             """
-
-            for obj in new_objects_to_position:
-                new_objects_context += f"\n    - {obj['id']} ({obj['name']}, {obj.get('category', 'unknown')})"
-
-            if len(new_objects_to_position) > 1:
-                new_objects_context += """
-
-            MULTI-OBJECT POSITIONING REQUIREMENTS:
-            - Position ALL objects with logical spatial relationships
-            - Group similar objects together (e.g., chairs around a table)
-            - Maintain proper spacing between objects (minimum 0.1m)
-            - Consider functional arrangements (e.g., lamps for lighting, chairs for seating)
-            - Ensure aesthetic balance and avoid overcrowding
-            - All objects should be on the floor (y = -3.0)
-
-            YOU MUST return multi-object format with ALL objects:
-            {{
-            "objects": [
-                {{"object_id": "chair_03", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
-                {{"object_id": "table_02", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
-            ],
-            "reasoning": "Positioned chairs around table..."
-            }}
-            """
-            else:
-                new_objects_context += """
-
-                SINGLE NEW OBJECT:
-                Return single-object format:
-                {{
-                "object_id": "...",
-                "position": {{"x": ..., "y": -3.0, "z": ...}},
-                "rotation": {{"x": 0, "y": 0, "z": 0}},
-                "action": "place",
-                "reasoning": "Placed object at ..."
-                }}
-                """
-        
-        new_objects_context = ""
-        if new_objects_to_position and len(new_objects_to_position) > 0:
-            new_objects_context = f"""
-
-            POSITIONING NEW OBJECTS:
-            You are positioning {len(new_objects_to_position)} NEW object(s) to add to the scene:
-            """
             
             for obj in new_objects_to_position:
                 new_objects_context += f"\n    - {obj['id']} ({obj['name']}, {obj.get('category', 'unknown')})"
             
             if len(new_objects_to_position) > 1:
-                new_objects_context += """
+                new_objects_context += f"""
 
             MULTI-OBJECT POSITIONING REQUIREMENTS:
             - Position ALL objects with logical spatial relationships
             - Group similar objects together (e.g., chairs around a table)
-            - Maintain proper spacing between objects (minimum 0.3m)
+            - Keep at least {spacing.MIN_CLEARANCE} m between neighbouring bounding boxes (rule 8)
             - Consider functional arrangements (e.g., lamps for lighting, chairs for seating)
             - Ensure aesthetic balance and avoid overcrowding
-            - All objects should be on the floor (y = -3.0)
-            
-            YOU MUST return multi-object format with ALL objects:
-            {{
-            "objects": [
-                {{"object_id": "chair_03", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
-                {{"object_id": "chair_04", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}},
-                {{"object_id": "table_02", "position": {{"x": ..., "y": -3.0, "z": ...}}, "rotation": {{...}}, "action": "place"}}
-            ],
-            "reasoning": "Positioned 2 chairs around table for seating arrangement..."
-            }}
-            """
-            else:
-                new_objects_context += """
-
-            SINGLE NEW OBJECT:
-            Return single-object format:
-            {{
-            "object_id": "...",
-            "position": {{"x": ..., "y": -3.0, "z": ...}},
-            "rotation": {{"x": 0, "y": 0, "z": 0}},
-            "action": "place",
-            "reasoning": "Placed object at ..."
-            }}
+            - All objects stand on the floor (y = -3.0) unless placed ON another object
+            - Return the multi-object format with ALL objects
             """
 
+        # Output contract: only the shape(s) this request can produce.
+        single_format = """For SINGLE OBJECT:
+            {"object_id": "chair_01", "position": {"x": 0.5, "y": -3.0, "z": -1.5}, "rotation": {"x": 0, "y": 0, "z": 0}, "action": "move", "reasoning": "Moved chair closer"}
+
+            For SINGLE OBJECT (with rotation):
+            {"object_id": "chair_01", "position": {"x": 0.5, "y": -3.0, "z": -1.5}, "rotation": {"x": 0, "y": 1.57, "z": 0}, "action": "place", "reasoning": "Placed and rotated chair to face table"}"""
+        multi_format = """For MULTIPLE OBJECTS:
+            {"objects": [{"object_id": "chair_01", "position": {"x": -0.4, "y": -3.0, "z": -2.0}, "rotation": {"x": 0, "y": 0, "z": 0}, "action": "place"}, {"object_id": "chair_02", "position": {"x": 0.4, "y": -3.0, "z": -2.0}, "rotation": {"x": 0, "y": 0, "z": 0}, "action": "place"}], "reasoning": "Arranged in a row facing user"}"""
+        n_new = len(new_objects_to_position or [])
+        if n_new > 1:
+            output_format = multi_format
+        elif n_new == 1:
+            output_format = single_format
+        else:
+            output_format = f"{single_format}\n\n            {multi_format}"
 
         # Prompt engineering
         prompt = f"""You are an expert spatial reasoning AI for a 3D virtual environment.
@@ -1460,37 +1125,46 @@ Rules:
 
             USER POSITION & ORIENTATION:
             Position: ({user_position['x']:.2f}, {user_position['y']:.2f}, {user_position['z']:.2f})
-            Facing Direction (Y-rotation): {user_position.get('rotation', {}).get('y', 0):.2f} radians
+            Facing: yaw {user_yaw(user_position):.2f} rad, looking toward {user_frame['forward']}
+            User-relative directions: {user_frame_text}
 
             CURRENT SCENE OBJECTS:
-            {json.dumps(scene_objects, indent=2)}
+            {json.dumps(scene_objects, separators=(',', ':'))}
             {new_objects_section}
 
             COORDINATE SYSTEM:
-            - X-axis: Left (-) to Right (+)
-            - Y-axis: Down (-) to Up (+), floor is at y=-3
-            - Z-axis: Forward (-) to Backward (+)
-            - Rotations in radians
-            - User typically faces -Z direction (forward)
+            - X: left wall (min X) → right wall (max X)
+            - Z: back wall (min Z) → front wall (max Z)
+            - Y: up is +, floor is at y=-3
+            - The ROOM's front/back/left/right (walls, corners such as "front right corner") always mean
+              these walls: front = max Z, back = min Z, left = min X, right = max X — not the user's view.
+            - Rotations in radians; rotation.y = θ makes an object face direction (sin θ, cos θ) in x/z.
+            - The user's facing is given under USER POSITION & ORIENTATION; do not assume it.
+            - An object's `position` is its model origin, NOT its bounding-box center:
+              box center = position + center_offset, box spans `bbox` (scene objects list both).
 
             {bounds_context}
             {gaze_target_context}
             {layout_graph_context}
 
             SPATIAL REASONING RULES:
-            1. "next to" = 1.5 meters offset horizontally
-            2. "in front of" = offset in -Z direction relative to reference
-            3. "behind" = offset in +Z direction
-            4. "on" = place on top (y-offset by ~0.3m above surface)
+            1. "next to X" / "beside X" = on a free side of X with a {spacing.NEXT_TO_GAP} m gap between the two bounding boxes
+               (box centers {spacing.NEXT_TO_GAP} m + both half sizes apart on that axis; position = box center − center_offset)
+            2. "in front of X" = offset toward X's `sides.front` (X's own facing, NOT the user's position)
+            3. "behind X" = offset toward X's `sides.back`; "left/right of X" = X's `sides.left` / `sides.right`
+               (as seen by someone standing in front of X, facing it)
+            4. "on X" = resting on X's top surface: y = X's `top_y`, x/z over X's footprint
             5. "between X and Y" = midpoint between two objects
-            6. "forward/backward/left/right" relative to USER's facing direction
+            6. "forward/backward/left/right" with NO reference object ("move it left", "push it forward")
+               = relative to the USER, using the User-relative directions above
             7. For rotation: convert degrees to radians (90° = 1.5708 radians)
-            8. For multiple objects of the same type: arrange them with spacing (0.5-0.8m apart)
+            8. When arranging several objects (row, grid, ring, group), keep at least {spacing.MIN_CLEARANCE} m between
+               neighbouring bounding boxes; a "next to" pair uses rule 1 instead
             9. For aesthetic goals like "cozy" or "spacious", consider spacing and orientation
-            10. ALL objects must be placed on the floor (y = -3.0)
-            11. Ensure that all the objects manipulated are on the floor 
+            10. Every object stands on the floor (y = -3.0) unless it is placed ON another object (rule 4)
             
             {new_objects_context}
+            {skill_context}
             {feedback_context}
 
             ROTATION RULES:
@@ -1511,7 +1185,7 @@ Rules:
 
             For MULTIPLE NEW OBJECTS (e.g., "add 3 chairs"):
             - Arrange them in a sensible pattern (line, arc, cluster)
-            - Space them appropriately (0.5-0.8m apart)
+            - Keep at least {spacing.MIN_CLEARANCE} m between neighbouring bounding boxes (rule 8)
             - Consider user's viewing position
             - Return array format with all objects
 
@@ -1523,43 +1197,9 @@ Rules:
             - Ensure coordinates are realistic
             - Object IDs must match exactly
 
-            For SINGLE OBJECT:
-            {{
-                "object_id": "chair_01",
-                "position": {{"x": 0.5, "y": -3.0, "z": -1.5}},
-                "rotation": {{"x": 0, "y": 0, "z": 0}},
-                "action": "move",
-                "reasoning": "Moved chair closer"
-            }}
-
-            For SINGLE OBJECT (with rotation):
-            {{
-                "object_id": "chair_01",
-                "position": {{"x": 0.5, "y": -3.0, "z": -1.5}},
-                "rotation": {{"x": 0, "y": 1.57, "z": 0}},
-                "action": "place",
-                "reasoning": "Placed and rotated chair to face table"
-            }}
-
-            For MULTIPLE OBJECTS:
-            {{
-                "objects": [
-                    {{
-                        "object_id": "chair_01",
-                        "position": {{"x": -0.4, "y": -3.0, "z": -2.0}},
-                        "rotation": {{"x": 0, "y": 0, "z": 0}},
-                        "action": "place"
-                    }},
-                    {{
-                        "object_id": "chair_02",
-                        "position": {{"x": 0.4, "y": -3.0, "z": -2.0}},
-                        "rotation": {{"x": 0, "y": 0, "z": 0}},
-                        "action": "place"
-                    }}
-                ],
-                "reasoning": "Arranged in a row facing user"
-            }}
+            {output_format}
             """
+        prompt = self._compact_prompt(prompt)
         
         # Check if this is a degree-based rotation — handle in Python, not LLM
         if parsed_command.get("action_hints", {}).get("primary_action") == "rotate":
@@ -1620,6 +1260,19 @@ Rules:
         except Exception as e:
             print(f"LLM spatial reasoning error: {e}")
             return self._fallback_calculation(parsed_command, scene_state, user_position)
+
+    @staticmethod
+    def _compact_prompt(prompt: str) -> str:
+        """
+        Drop the source-code indentation the triple-quoted sections carry and collapse
+        runs of blank lines. Wording is untouched; only whitespace tokens go away.
+        """
+        lines = [line.strip() for line in prompt.splitlines()]
+        out: List[str] = []
+        for line in lines:
+            if line or (out and out[-1]):
+                out.append(line)
+        return "\n".join(out).strip()
 
     def _validate_transformation(self, result: Dict) -> bool:
         """

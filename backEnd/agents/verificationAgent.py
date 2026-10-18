@@ -16,7 +16,7 @@ class VerificationAgent:
         self.database = database
         load_dotenv(Path(__file__).resolve().parents[2] / ".env")
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        self.model = genai.GenerativeModel('gemini-3.8-flash')
 
     def get_object_state (self, object_name: str) -> Optional[Dict]:
         """

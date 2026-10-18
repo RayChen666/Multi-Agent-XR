@@ -14,6 +14,8 @@ let setStatus = () => {};
 let getGazeTargetFn = () => ({ type: 'none' });
 
 const _worldPos = new THREE.Vector3();
+const _worldQuat = new THREE.Quaternion();
+const _euler = new THREE.Euler();
 
 export function initCommandBridge(opts) {
   camera = opts.camera ?? null;
@@ -35,6 +37,60 @@ export function getUserPosition() {
     y: _worldPos.y,
     z: _worldPos.z,
   };
+}
+
+/**
+ * World-space headset yaw, in radians, using the backend's object convention
+ * (backEnd/tools/orientation.py): rotation.y = θ faces (sin θ, cos θ) in XZ.
+ * A three.js camera looks down its local -Z, so yaw = euler.y + π: the default
+ * view toward -Z is π, turned to face -X is -π/2. Includes snap turn (player rig)
+ * and desktop OrbitControls. 'YXZ' order keeps yaw stable when looking up/down.
+ * Sent with every command as user_position.rotation (executeCommand).
+ */
+export function getUserRotation() {
+  if (!camera) {
+    return { x: 0, y: Math.PI, z: 0 };
+  }
+  camera.getWorldQuaternion(_worldQuat);
+  _euler.setFromQuaternion(_worldQuat, 'YXZ');
+  const yaw = Math.atan2(Math.sin(_euler.y + Math.PI), Math.cos(_euler.y + Math.PI));
+  return { x: 0, y: yaw, z: 0 };
+}
+
+const RAD2DEG = 180 / Math.PI;
+let poseWatchTimer = null;
+let lastLoggedPose = null;
+
+function logUserPose(reason) {
+  const p = getUserPosition();
+  const yaw = getUserRotation().y;
+  console.log(
+    `[UserPose] ${reason} | yaw ${(yaw * RAD2DEG).toFixed(1)}° (${yaw.toFixed(3)} rad)`
+    + ` | pos (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`,
+  );
+  lastLoggedPose = { yaw, ...p };
+}
+
+/**
+ * Debug: print the user's pose whenever yaw turns ≥ 2° or the head moves ≥ 5 cm
+ * (checked every `intervalMs`). watchUserPose(false) stops it.
+ */
+export function watchUserPose(enable = true, intervalMs = 250) {
+  clearInterval(poseWatchTimer);
+  poseWatchTimer = null;
+  if (!enable) {
+    console.log('[UserPose] watch stopped');
+    return;
+  }
+  logUserPose('watch started');
+  poseWatchTimer = setInterval(() => {
+    const p = getUserPosition();
+    const yaw = getUserRotation().y;
+    const last = lastLoggedPose;
+    const turned = Math.abs(Math.atan2(Math.sin(yaw - last.yaw), Math.cos(yaw - last.yaw))) * RAD2DEG >= 2;
+    const moved = Math.hypot(p.x - last.x, p.y - last.y, p.z - last.z) >= 0.05;
+    if (turned || moved) logUserPose(turned ? 'turned' : 'moved');
+  }, intervalMs);
 }
 
 export function getGazeSnapshot() {
@@ -61,7 +117,8 @@ export async function executeCommand() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         command,
-        user_position: getUserPosition(),
+        // Pose at submit time: world position + yaw (backEnd main.py UserPose).
+        user_position: { ...getUserPosition(), rotation: getUserRotation() },
         gaze: getGazeSnapshot(),
       }),
     });

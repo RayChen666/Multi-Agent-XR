@@ -9,10 +9,29 @@ from stt.routes import router as stt_router
 import uvicorn
 import json
 import ssl
+from tools.orientation import DEFAULT_USER_YAW
+
+class Vec3(BaseModel):
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+class UserPose(BaseModel):
+    """Headset world position + facing, sampled at command-submit time (webXR/commandBridge.js)."""
+    x: float
+    y: float
+    z: float
+    # rotation.y = yaw, convention of tools/orientation.py (spawn view down -Z = π).
+    # Optional so clients that only send x/y/z keep working.
+    rotation: Optional[Vec3] = None
+
+    def as_state(self) -> Dict[str, Any]:
+        rotation = self.rotation or Vec3(y=DEFAULT_USER_YAW)
+        return {"x": self.x, "y": self.y, "z": self.z, "rotation": rotation.model_dump()}
 
 class CommandRequest(BaseModel):
     command: str
-    user_position: Optional[Dict[str, float]] = None
+    user_position: Optional[UserPose] = None
     # Embodied head-gaze snapshot taken at command-submit time. Well-formed shapes:
     #   {"type": "floor",  "point": {...}}
     #   {"type": "wall",   "wall_id": str, "point": {...}}
@@ -193,13 +212,15 @@ async def process_natural_language_command(request: CommandRequest):
     Body:
         {
             "command": "move the chair forward",
-            "user_position": {"x": 0, "y": 0, "z": 0}  // optional
+            "user_position": {"x": 0, "y": 0, "z": 0, "rotation": {"x": 0, "y": 3.14, "z": 0}}  // optional
         }
     """
     try:
         # Update user position if provided from VR headset
         if request.user_position:
-            orchestration_agent.user_position = request.user_position
+            orchestration_agent.user_position = request.user_position.as_state()
+            print(f"User pose: pos=({request.user_position.x:.2f}, {request.user_position.y:.2f}, "
+                  f"{request.user_position.z:.2f}) yaw={orchestration_agent.user_position['rotation']['y']:.3f}")
 
         # Update head-gaze snapshot (deictic grounding for "there"/"on that").
         # Always set it: a fresh command should never reuse a stale prior gaze.
