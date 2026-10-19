@@ -1060,7 +1060,12 @@ class Orchestrator:
                           "anchor_object": semantic_layout.get("anchor_object")}},
                 source="memory",
             )
-            print(f"   Skill activated: {get_registry().describe(state['parsed_command']['skill'])}\n")
+            
+            #print(f"   Skill activated: {get_registry().describe(state['parsed_command']['skill'])}\n")
+            print(f"   Skill activated: {get_registry().describe(state['parsed_command']['skill'])}")
+            for e in ((state['parsed_command']['skill'] or {}).get('args') or {}).get('edges', []):
+                print(f"      {json.dumps(e)}")
+            print()
 
 
 

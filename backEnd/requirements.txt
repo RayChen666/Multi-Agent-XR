@@ -1,15 +1,11 @@
 fastapi==0.104.1
 uvicorn==0.24.0
-langchain
 python-multipart==0.0.6
-pydantic==2.5.0
+pydantic>=2.7.4
 google-generativeai
 python-dotenv
-fastapi
-uvicorn
 websockets
 cryptography
-langgraph
+langgraph>=0.6,<0.7
 trimesh
 pyyaml
-dotenv

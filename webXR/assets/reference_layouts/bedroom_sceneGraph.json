@@ -1,0 +1,16 @@
+{
+  "anchor_object": "bed",
+  "layout_graph": {
+    "nodes": ["bed", "small_cabinet", "cabinet", "desk", "office_chair", "tv", "lamp", "back_wall", "back_left_corner", "back_right_corner", "right_wall", "front_left_corner", "front_right_corner"],
+    "edges": [
+      {"from": "bed", "to": "back_wall", "relation": "next_to", "side": "north"},
+      {"from": "small_cabinet", "to": "back_left_corner", "relation": "at_corner", "corner": "back_left"},
+      {"from": "small_cabinet", "to": "bed", "relation": "next_to", "side": "west"},
+      {"from": "cabinet", "to": "back_right_corner", "relation": "at_corner", "corner": "back_right"},
+      {"from": "desk", "to": "right_wall", "relation": "next_to", "side": "east"},
+      {"from": "office_chair", "to": "desk", "relation": "facing", "side": "west", "facing_direction": "east"},
+      {"from": "tv", "to": "front_left_corner", "relation": "at_corner", "corner": "front_left"},
+      {"from": "lamp", "to": "front_right_corner", "relation": "at_corner", "corner": "front_right"}
+    ]
+  }
+}

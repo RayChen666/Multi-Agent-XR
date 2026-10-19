@@ -1,0 +1,16 @@
+{
+  "anchor_object": "desk",
+  "layout_graph": {
+    "nodes": ["cabinet_small", "desk", "sofa", "office_chair", "cabinet_large", "back_wall", "left_wall", "right_wall", "front_wall"],
+    "edges": [
+      {"from": "cabinet_small", "to": "back_wall", "relation": "next_to", "side": "north"},
+      {"from": "cabinet_small", "to": "desk", "relation": "close_to", "side": "north"},
+      {"from": "sofa", "to": "left_wall", "relation": "next_to", "side": "west"},
+      {"from": "sofa", "to": "desk", "relation": "close_to", "side": "west"},
+      {"from": "desk", "to": "right_wall", "relation": "close_to", "side": "east"},
+      {"from": "office_chair", "to": "desk", "relation": "facing", "side": "east", "facing_direction": "west"},
+      {"from": "cabinet_large", "to": "front_wall", "relation": "next_to", "side": "south"},
+      {"from": "cabinet_large", "to": "sofa", "relation": "close_to", "side": "south"}
+    ]
+  }
+}

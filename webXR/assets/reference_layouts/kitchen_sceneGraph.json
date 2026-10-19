@@ -1,0 +1,14 @@
+{
+  "anchor_object": "kitchen_table",
+  "layout_graph": {
+    "nodes": ["fridge", "oven", "washer", "sink", "kitchen_table", "kitchen_chair", "back_wall", "left_wall"],
+    "edges": [
+      {"from": "fridge", "to": "back_wall", "relation": "at_corner", "corner": "back_left"},
+      {"from": "oven", "to": "back_wall", "relation": "next_to", "side": "north"},
+      {"from": "washer", "to": "left_wall", "relation": "next_to", "side": "west"},
+      {"from": "sink", "to": "washer", "relation": "next_to", "side": "east"},
+      {"from": "kitchen_table", "to": "sink", "relation": "close_to", "side": "east"},
+      {"from": "kitchen_chair", "to": "kitchen_table", "relation": "facing", "side": "south", "facing_direction": "north"}
+    ]
+  }
+}

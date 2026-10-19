@@ -116,8 +116,9 @@ class Memory:
         )
         print(f"   Target room type detected: '{target_room_type}'")
 
-        # ── Step 2: ImageAgent → semantic layout graph ────────────────────────
-        semantic_layout = self.image_agent.extract_semantic_layout(target_room_type)
+        # ── Step 2: stored scene graph, else ImageAgent → semantic layout graph ─
+        semantic_layout = (self._load_scene_graph(target_room_type)
+                           or self.image_agent.extract_semantic_layout(target_room_type))
         if not semantic_layout:
             print("   ImageAgent returned no semantic layout — aborting")
             return None
@@ -153,6 +154,36 @@ class Memory:
 
         print("   MemoryAgent complete — memory_context ready\n")
         return memory_context
+
+
+    # =========================================================================
+    # STEP 2 — stored scene graph (skips ImageAgent's two Gemini calls)
+    # =========================================================================
+
+    def _load_scene_graph(self, room_type: str) -> Optional[Dict]:
+        """
+        Load reference_layouts/<room_type>_sceneGraph.json — same shape as
+        ImageAgent's output ({anchor_object, layout_graph: {nodes, edges}}), so the
+        layout is identical every run and can be hand-edited.
+        Returns None when there is no file, so the caller falls back to ImageAgent.
+        """
+        path = (self.image_agent.assets_base / "reference_layouts"
+                / f"{room_type.replace(' ', '_')}_sceneGraph.json")
+        if not path.exists():
+            return None
+        try:
+            with open(path) as f:
+                semantic_layout = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"   Failed to load scene graph {path.name}: {e} — falling back to ImageAgent")
+            return None
+        if not (semantic_layout.get("layout_graph") or {}).get("edges"):
+            print(f"   Scene graph {path.name} has no edges — falling back to ImageAgent")
+            return None
+        print(f"   Scene graph loaded from {path.name}: "
+              f"anchor='{semantic_layout.get('anchor_object')}', "
+              f"edges={len(semantic_layout['layout_graph']['edges'])}")
+        return semantic_layout
 
 
     # =========================================================================
