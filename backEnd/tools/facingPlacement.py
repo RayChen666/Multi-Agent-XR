@@ -57,8 +57,9 @@ def facing_placement(
         position = clamp_into_room(mover, position, room_bounds)
     px, pz = position['x'], position['z']
 
-    # Face toward target (yaw convention lives in tools/orientation.py).
-    rotation_y = facing_angle(px, pz, tx, tz)
+    # Face toward the target's box centre, not its origin (offsets reach 0.7 m on some
+    # assets). Yaw convention lives in tools/orientation.py.
+    rotation_y = facing_angle(px, pz, t_centre['x'], t_centre['z'])
 
     return {
         'x': round(px, 3),

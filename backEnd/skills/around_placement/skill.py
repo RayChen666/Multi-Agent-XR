@@ -3,21 +3,29 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from skills._common import (PHRASE, SkillContext, infer_target, placed_objects,
-                            resolve_anchor, resolve_movers, search_command)
+from skills._common import (PHRASE, USER_ID, SkillContext, box_centre, infer_target, is_user_phrase,
+                            placed_objects, resolve_movers, resolve_target, search_command, unresolved)
 from tools.aroundPlacement import around_placement_positions
 from tools.orientation import angle_diff, facing_angle
+from tools.spacing import MIN_CLEARANCE, USER_MIN_GAP
 
 TOLERANCE_RAD = 0.15
 INFER_PRIORITY = 3
+# Only a request worded as around / surrounding.
+TRIGGER = r'\b(?:around|surround\w*|encircl\w*|circle)\b'
 # How far past the tool's ring radius a retried mover may drift and still count as "around".
 RADIUS_SLACK_M = 0.6
 
 
 class Args(BaseModel):
     target: str = Field(description="objects to arrange, e.g. 'chair'")
-    anchor: str = Field(description="object to arrange them around, e.g. 'table'")
+    anchor: str = Field(description="object to arrange them around, e.g. 'table'; 'user' for 'me'")
     all_matching: bool = Field(True, description="false only when the user names a single target object")
+
+
+def _gap(anchor: Dict) -> float:
+    """Clearance between ring and anchor: personal space around the user."""
+    return USER_MIN_GAP if anchor.get('id') == USER_ID else MIN_CLEARANCE
 
 
 def _ring_radius(anchor: Dict, mover: Dict) -> float:
@@ -25,7 +33,7 @@ def _ring_radius(anchor: Dict, mover: Dict) -> float:
     mov = mover.get('collision') or {}
     return (max(float(anc.get('width', 0.5)), float(anc.get('depth', 0.5))) / 2
             + max(float(mov.get('width', 0.4)), float(mov.get('depth', 0.4))) / 2
-            + 0.15)
+            + _gap(anchor))
 
 
 def infer(parsed_command: Dict) -> Optional[Dict]:
@@ -35,11 +43,12 @@ def infer(parsed_command: Dict) -> Optional[Dict]:
         return None
     anchor = m.group(1).strip()
     # Legacy behavior: "around" arranges every matching target.
-    return {'anchor': anchor, **infer_target(parsed_command, anchor), 'all_matching': True}
+    return {'anchor': USER_ID if is_user_phrase(anchor) else anchor,
+            **infer_target(parsed_command, anchor), 'all_matching': True}
 
 
 def run(args: Args, ctx: SkillContext) -> Optional[Dict]:
-    anchor = resolve_anchor(args.anchor, ctx)
+    anchor = resolve_target(args.anchor, ctx, walls=False)
     if not anchor:
         print(f"   [AROUND] anchor '{args.anchor}' not found")
         return None
@@ -48,7 +57,7 @@ def run(args: Args, ctx: SkillContext) -> Optional[Dict]:
         print(f"   [AROUND] target '{args.target}' not found")
         return None
 
-    positions = around_placement_positions(movers, anchor, ctx.room_bounds)
+    positions = around_placement_positions(movers, anchor, ctx.room_bounds, gap=_gap(anchor))
     if not positions:
         return None
 
@@ -68,11 +77,11 @@ def run(args: Args, ctx: SkillContext) -> Optional[Dict]:
 
 
 def postcondition(args: Args, placement: Dict, ctx: SkillContext) -> List[Dict]:
-    anchor = resolve_anchor(args.anchor, ctx)
+    anchor = resolve_target(args.anchor, ctx, walls=False)
     if not anchor:
-        return []
-    ax = float(anchor.get('position', {}).get('x', 0))
-    az = float(anchor.get('position', {}).get('z', 0))
+        return unresolved('anchor', args.anchor)
+    centre = box_centre(anchor)
+    ax, az = centre['x'], centre['z']
     violations = []
     for obj in placed_objects(placement, ctx):
         if obj.get('id') == anchor.get('id'):

@@ -1,8 +1,11 @@
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Iterable
 
 from tools.aabbCheck import build_aabb
+from tools.graphLayout import WALL_AXIS, WALL_ROTATION
+from tools.orientation import facing_angle, user_yaw
 from tools.spacing import ROOM_MARGIN
 
 """
@@ -98,6 +101,114 @@ def resolve_anchor(phrase: str, ctx: SkillContext) -> Optional[Dict]:
     new_ids = [o.get('id') for o in ctx.new_objects]
     found = resolve_objects(phrase, ctx.scene_state.get('objects', []), new_ids, ctx.user_position)
     return found[0] if found else None
+
+
+# Anchor phrases that mean the user's own body ("face me", "1m in front of me").
+USER_WORDS = {'user', 'me', 'myself', 'us', 'i'}
+USER_ID = 'user'
+
+
+def is_user_phrase(phrase: Optional[str]) -> bool:
+    return (phrase or '').strip().lower() in USER_WORDS
+
+
+def user_anchor(ctx: SkillContext) -> Optional[Dict]:
+    """
+    The user as an anchor object: a POINT at the headset's x/z (never its y, which is
+    head height), on the floor, turned to the headset yaw, with a zero-size collision box
+    so the AABB-based tools treat it as that point.
+    """
+    if not ctx.user_position:
+        return None
+    floor_y = float(((ctx.room_bounds or {}).get('min') or {}).get('y', -3.0))
+    return {
+        'id': USER_ID, 'name': 'user', 'category': 'user',
+        'position': {'x': float(ctx.user_position.get('x', 0)), 'y': floor_y,
+                     'z': float(ctx.user_position.get('z', 0))},
+        'rotation': {'x': 0, 'y': user_yaw(ctx.user_position), 'z': 0},
+        'collision': {'width': 0.0, 'height': 0.0, 'depth': 0.0, 'offset': {'x': 0, 'y': 0, 'z': 0}},
+    }
+
+
+# Wall phrases ("back wall", "the left wall", "north wall") -> graph wall name. Same
+# orientation convention as tools/graphLayout.py: back = -Z, front = +Z, left = -X, right = +X.
+WALL_WORDS = {'back': 'back_wall', 'rear': 'back_wall', 'north': 'back_wall',
+              'front': 'front_wall', 'south': 'front_wall',
+              'left': 'left_wall', 'west': 'left_wall',
+              'right': 'right_wall', 'east': 'right_wall'}
+
+
+def wall_name(phrase: Optional[str]) -> Optional[str]:
+    """'the back wall' / 'back_wall' -> 'back_wall'; None when the phrase is not a wall."""
+    m = re.fullmatch(r'(?:the\s+)?(\w+)\s+wall', (phrase or '').strip().lower().replace('_', ' '))
+    return WALL_WORDS.get(m.group(1)) if m else None
+
+
+def wall_anchor(wall: str, ctx: SkillContext) -> Optional[Dict]:
+    """
+    A wall as an anchor object: a zero-thickness box covering that room boundary,
+    turned to face into the room (graphLayout.WALL_ROTATION), so its `front` is the
+    room side and the AABB tools measure edge-to-wall gaps directly.
+    """
+    if not ctx.room_bounds or wall not in WALL_AXIS:
+        return None
+    lo, hi = ctx.room_bounds['min'], ctx.room_bounds['max']
+    axis, side = WALL_AXIS[wall]
+    along = 'z' if axis == 'x' else 'x'
+    centre = {'x': (lo['x'] + hi['x']) / 2, 'z': (lo['z'] + hi['z']) / 2}
+    centre[axis] = float(lo[axis] if side == 'min' else hi[axis])
+    return {
+        'id': wall, 'name': wall.replace('_', ' '), 'category': 'wall',
+        'position': {'x': centre['x'], 'y': float(lo['y']), 'z': centre['z']},
+        'rotation': {'x': 0, 'y': WALL_ROTATION[wall], 'z': 0},
+        # Local width runs along the wall; the wall's yaw turns it onto the right world axis.
+        'collision': {'width': float(hi[along] - lo[along]), 'height': float(hi['y'] - lo['y']), 'depth': 0.0,
+                      'offset': {'x': 0, 'y': float(hi['y'] - lo['y']) / 2, 'z': 0}},
+    }
+
+
+def is_wall(obj: Optional[Dict]) -> bool:
+    return bool(obj) and obj.get('category') == 'wall'
+
+
+def resolve_target(phrase: str, ctx: SkillContext, walls: bool = True) -> Optional[Dict]:
+    """
+    Anchor object for `phrase`: user_anchor() for 'me'/'user', wall_anchor() for
+    'back wall' etc. (unless walls=False), else resolve_anchor().
+    """
+    if is_user_phrase(phrase):
+        return user_anchor(ctx)
+    wall = wall_name(phrase)
+    if wall:
+        return wall_anchor(wall, ctx) if walls else None
+    return resolve_anchor(phrase, ctx)
+
+
+def box_centre(obj: Dict) -> Dict[str, float]:
+    """Footprint centre {'x','z'}: the AABB centre (collision offset applied), else the origin."""
+    if obj.get('collision'):
+        lo, hi = build_aabb(obj)
+        return {'x': (lo[0] + hi[0]) / 2, 'z': (lo[2] + hi[2]) / 2}
+    pos = obj.get('position') or {}
+    return {'x': float(pos.get('x', 0)), 'z': float(pos.get('z', 0))}
+
+
+def yaw_toward(target: Dict, x: float, z: float) -> float:
+    """
+    rotation_y for an object at (x, z) to face `target`: square-on for a wall (opposite
+    the wall's into-the-room yaw), else toward its box centre (the user: headset floor point).
+    """
+    if is_wall(target):
+        yaw = WALL_ROTATION[target['id']] + math.pi
+        return math.atan2(math.sin(yaw), math.cos(yaw))
+    t = box_centre(target)
+    return facing_angle(x, z, t['x'], t['z'])
+
+
+def unresolved(role: str, phrase: str) -> List[Dict]:
+    """Postcondition result when the reference cannot be found: never pass unverified."""
+    return [{'message': f"{role} '{phrase}' not found in the scene, so the placement cannot be verified",
+             'fixable': False}]
 
 
 def resolve_movers(target: str, all_matching: bool, anchor: Optional[Dict], ctx: SkillContext) -> List[Dict]:

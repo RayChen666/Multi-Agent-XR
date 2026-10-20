@@ -1,4 +1,5 @@
 import importlib
+import re
 from functools import lru_cache
 from pathlib import Path
 from string import Template
@@ -26,6 +27,8 @@ and may define:
   infer(parsed_command) -> Optional[Dict]   regex fallback for the args
   INFER_PRIORITY = int                      order among infer() fallbacks (lower first)
   ACCEPT_ON_EXHAUSTED = bool                execute anyway once retries run out (default False)
+  TRIGGER = regex                           words the user's prompt must contain for the LLM's
+                                            choice of this skill to stand (e.g. "closer|farther")
 
 SKILL.md frontmatter `selectable: false` hides a skill from the LanguageAgent
 (its args come from another agent, e.g. graph_layout from the Memory route).
@@ -48,6 +51,8 @@ class Skill:
         self.module = importlib.import_module(f"skills.{folder.name}.skill")
         self.Args = self.module.Args
         self.accept_on_exhausted: bool = getattr(self.module, "ACCEPT_ON_EXHAUSTED", False)
+        trigger = getattr(self.module, "TRIGGER", None)
+        self.trigger = re.compile(trigger, re.IGNORECASE) if trigger else None
 
     def parse_args(self, raw: Dict):
         return self.Args(**raw)
@@ -111,16 +116,18 @@ class SkillRegistry:
             infer = getattr(skill.module, "infer", None)
             raw = infer(parsed_command) if infer else None
             if raw:
-                call = self.validate_call({"name": skill.name, "args": raw}, source="regex")
+                call = self.validate_call({"name": skill.name, "args": raw}, source="regex",
+                                          prompt=parsed_command.get("original_prompt"))
                 if call:
                     return call
         return None
 
-    def validate_call(self, call, source: str = "llm") -> Optional[Dict]:
+    def validate_call(self, call, source: str = "llm", prompt: Optional[str] = None) -> Optional[Dict]:
         """
         Normalize a skill call; anything unusable becomes None. `source` records who
         chose it ("llm" | "regex" | an agent such as "memory") for logs and analysis.
-        LLM/regex calls may only name selectable skills.
+        LLM/regex calls may only name selectable skills. When `prompt` (the user's words)
+        is given, a skill with a TRIGGER is rejected unless the prompt matches it.
         """
         if not isinstance(call, dict):
             return None
@@ -136,6 +143,9 @@ class SkillRegistry:
             args = skill.parse_args(call.get("args") or {})
         except ValidationError as e:
             print(f"   [SKILL] invalid args for '{skill.name}': {e.errors()}")
+            return None
+        if skill.trigger and prompt is not None and not skill.trigger.search(prompt):
+            print(f"   [SKILL] '{skill.name}' rejected: \"{prompt}\" has none of its trigger words")
             return None
         return {"name": skill.name, "args": args.model_dump(by_alias=True), "source": source}
 

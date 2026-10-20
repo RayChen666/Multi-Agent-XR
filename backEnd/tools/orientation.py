@@ -104,3 +104,15 @@ def user_yaw(user_position) -> float:
     rotation = (user_position or {}).get('rotation') or {}
     yaw = rotation.get('y')
     return DEFAULT_USER_YAW if yaw is None else float(yaw)
+
+
+def user_direction_axis(yaw: float, direction: str):
+    """
+    Snap a direction relative to the USER ("1 m in front of me", "to my left") to the
+    nearest world axis: ('x' | 'z', +1 | -1). Same snapping as direction_axis(), but
+    left/right are the user's OWN left/right, not those of someone facing the user.
+    """
+    vx, vz = user_direction_vector(yaw, direction)
+    if abs(vx) > abs(vz):
+        return 'x', (1 if vx > 0 else -1)
+    return 'z', (1 if vz > 0 else -1)

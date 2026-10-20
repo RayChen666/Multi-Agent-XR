@@ -91,8 +91,9 @@ class CodeAgent:
                 
                 success = True
 
-                # Execute position update
-                if action in ['move', 'place'] and position:
+                # Execute position update. 'rotate' carries one too: turning about the box
+                # centre moves the model origin (tools/rotatePlacement.py).
+                if action in ['move', 'place', 'rotate'] and position and position != obj.get('position'):
                     success = self.database.update_object_position(object_id, position)
                     if success:
                         print(f"      Position: ({position['x']:.2f}, {position['y']:.2f}, {position['z']:.2f})")

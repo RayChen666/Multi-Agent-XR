@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.aabbCheck import build_aabb, clamp_into_room, world_collision
 from tools.orientation import direction_axis
@@ -28,6 +28,7 @@ def distance_placement(
     distance: float,
     direction: str,
     room_bounds: Optional[Dict] = None,
+    axis_sign: Optional[Tuple[str, int]] = None,
 ) -> Dict:
     """
     Compute a position for `mover` such that its AABB edge sits exactly
@@ -41,6 +42,8 @@ def distance_placement(
         distance:    Requested edge-to-edge gap in meters (>= 0).
         direction:   One of 'back', 'behind', 'front', 'left', 'right' (relative to anchor).
         room_bounds: Optional {'min': {'x','y','z'}, 'max': ...} for clamping.
+        axis_sign:   Precomputed (axis, sign) overriding `direction`, e.g. from
+                     tools.orientation.user_direction_axis when the anchor is the user.
 
     Returns:
         {'x': float, 'y': float, 'z': float} — new position for mover.
@@ -52,7 +55,7 @@ def distance_placement(
         raise ValueError("Both mover and anchor require a 'collision' field to compute bounding boxes")
 
     # sign=+1 places the mover on the anchor's max side of `axis`, -1 on its min side.
-    axis, sign = direction_axis(anchor, direction)
+    axis, sign = axis_sign or direction_axis(anchor, direction)
     ai = AXIS_INDEX[axis]
 
     anchor_min, anchor_max = build_aabb(anchor)
@@ -86,15 +89,17 @@ def distance_placement(
     return position
 
 
-def measured_edge_distance(mover: Dict, anchor: Dict, direction: str) -> float:
+def measured_edge_distance(mover: Dict, anchor: Dict, direction: str,
+                           axis_sign: Optional[Tuple[str, int]] = None) -> float:
     """
     Given mover/anchor with positions already set, return the actual
     edge-to-edge gap along `direction`'s axis: bound_mover - bound_anchor
     signed so a positive value means the constraint is satisfied on the
     requested side. Used to verify abs(bound_mover - bound_anchor) == distance
-    after a placement (or LLM-proposed move) has been applied.
+    after a placement (or LLM-proposed move) has been applied. axis_sign as in
+    distance_placement().
     """
-    axis, sign = direction_axis(anchor, direction)
+    axis, sign = axis_sign or direction_axis(anchor, direction)
     ai = AXIS_INDEX[axis]
 
     mover_min, mover_max = build_aabb(mover)

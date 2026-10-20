@@ -10,8 +10,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.gridLayout import grid_layout_positions
 from skills.registry import get_registry
-from skills._common import SkillContext, resolve_anchor
-from tools.orientation import (DEFAULT_USER_YAW, direction_axis, facing_angle,
+from skills._common import SkillContext, box_centre, resolve_target, yaw_toward
+from tools.rotatePlacement import rotate_about_centre
+from tools.orientation import (DEFAULT_USER_YAW, angle_diff, direction_axis,
                                user_direction_vector, user_yaw)
 from tools.aabbCheck import build_aabb, world_collision
 from tools import spacing
@@ -116,7 +117,43 @@ class SceneAgent:
             room_bounds,
             anchor_object,
         )
-        return self._apply_facing_rotation(result, parsed_command, scene_state, user_position)
+        # Object data by id (collision + current pose) for the rotation post-processes.
+        known = {o.get('id'): o for o in scene_state.get('objects', [])}
+        known.update({o.get('id'): o for o in (new_objects_to_position or [])})
+        result = self._turn_in_place_about_centre(result, scene_state)
+        return self._apply_facing_rotation(result, parsed_command, scene_state, user_position, known)
+
+    @staticmethod
+    def _entries(result: Optional[Dict]) -> List[Dict]:
+        """The per-object entries of any SceneAgent result shape."""
+        if not result:
+            return []
+        if 'objects' in result:
+            return result['objects']
+        return [result] if 'position' in result else []
+
+    def _turn_in_place_about_centre(self, result: Dict, scene_state: Dict) -> Dict:
+        """
+        An existing object whose rotation changed but whose position did not is being
+        turned in place (e.g. the LLM's "rotate the table 180°", or facing_placement):
+        move its origin so it turns about its bounding-box centre, not its model origin
+        (tools.rotatePlacement). Moved objects are left alone: their position is deliberate.
+        """
+        before = {o.get('id'): o for o in scene_state.get('objects', [])}
+        for entry in self._entries(result):
+            old = before.get(entry.get('object_id'))
+            pos, rot = entry.get('position') or {}, entry.get('rotation') or {}
+            if not old or not old.get('collision') or 'y' not in rot:
+                continue
+            old_pos = old.get('position') or {}
+            same_spot = all(abs(float(pos.get(a, 0)) - float(old_pos.get(a, 0))) < 1e-3 for a in ('x', 'z'))
+            old_yaw = float((old.get('rotation') or {}).get('y', 0) or 0)
+            if same_spot and angle_diff(float(rot['y']), old_yaw) > 1e-4:
+                entry['position'] = rotate_about_centre(old, float(rot['y']))
+                print(f"   [ROTATE] {old['id']} turned about its box centre: origin "
+                      f"({old_pos.get('x', 0):.2f}, {old_pos.get('z', 0):.2f}) -> "
+                      f"({entry['position']['x']:.2f}, {entry['position']['z']:.2f})")
+        return result
     
     def _compute_rotation(self,
                       parsed_command: Dict,
@@ -730,12 +767,15 @@ Rules:
 
     
     def _apply_facing_rotation(self, result: Dict, parsed_command: Dict, scene_state: Dict,
-                               user_position: Optional[Dict] = None) -> Dict:
+                               user_position: Optional[Dict] = None,
+                               known: Optional[Dict[str, Dict]] = None) -> Dict:
         """
         Post-process any placement result: if a 'facing X' target is detected,
         recompute each object's rotation_y from its final position toward the target.
         This ensures the facing constraint survives collision-avoidance retries where
         the LLM repositions the object but drops the rotation.
+        The yaw is aimed from the object's box centre, and the object turns about that
+        centre, so the box stays where the proposal put it (`known`: object data by id).
         """
         if not result:
             return result
@@ -743,27 +783,28 @@ Rules:
         if not target:
             return result
 
-        tx = float(target.get('position', {}).get('x', 0))
-        tz = float(target.get('position', {}).get('z', 0))
-
-        def _rot(px, pz) -> Dict:
-            return {'x': 0, 'y': round(facing_angle(float(px), float(pz), tx, tz), 4), 'z': 0}
-
-        if 'objects' in result:
-            for obj in result['objects']:
-                pos = obj.get('position', {})
-                obj['rotation'] = _rot(pos.get('x', 0), pos.get('z', 0))
-        elif 'position' in result:
-            pos = result.get('position', {})
-            result['rotation'] = _rot(pos.get('x', 0), pos.get('z', 0))
+        # Same rule as facing_placement (skills._common.yaw_toward): box centre, the user's
+        # floor point, or square-on to a wall — never the target's model origin.
+        for entry in self._entries(result):
+            pos = entry.get('position') or {}
+            base = (known or {}).get(entry.get('object_id'))
+            if base and base.get('collision'):
+                proposed = {**base, 'position': pos, 'rotation': entry.get('rotation') or base.get('rotation') or {}}
+                c = box_centre(proposed)
+                yaw = round(yaw_toward(target, c['x'], c['z']), 4)
+                entry['position'] = rotate_about_centre(proposed, yaw)
+            else:
+                yaw = round(yaw_toward(target, float(pos.get('x', 0)), float(pos.get('z', 0))), 4)
+            entry['rotation'] = {'x': 0, 'y': yaw, 'z': 0}
 
         return result
 
     def _detect_facing_target(self, parsed_command: Dict, scene_state: Dict,
                               user_position: Optional[Dict] = None) -> Optional[Dict]:
         """
-        Return the scene object that 'facing X' refers to, or None. Checked even when
-        another skill was chosen ("1m left of the desk, facing the window").
+        Return the target that 'facing X' refers to — a scene object, the user ('me') or a
+        wall — or None. Checked even when another skill was chosen ("1m left of the desk,
+        facing the window").
         """
         skill_call = parsed_command.get('skill') or {}
         if skill_call.get('name') == 'facing_placement':
@@ -772,7 +813,9 @@ Rules:
             phrase = infer_facing_phrase(parsed_command)
         if not phrase:
             return None
-        return resolve_anchor(phrase, SkillContext(scene_state=scene_state, user_position=user_position))
+        return resolve_target(phrase, SkillContext(
+            scene_state=scene_state, user_position=user_position,
+            room_bounds=(scene_state.get('metadata') or {}).get('bounds')))
 
     def _grid_layout_positions(self, objects: List[Dict], room_bounds: Dict, gap: float = 0.15) -> List[Dict]:
         return grid_layout_positions(objects, room_bounds, gap)
@@ -853,6 +896,10 @@ Rules:
             if skill_result:
                 return skill_result
             print(f"   [SKILL {skill.name}] not applicable, falling back to LLM reasoning")
+            # The tool gave up (e.g. the LanguageAgent picked the wrong skill): Verification
+            # must not hold the LLM's answer to this skill's postcondition, and the LLM must
+            # not be told to follow its rules. Kept on the call so logs still show the choice.
+            parsed_command['skill']['applicable'] = False
 
         # If feedback exists and every collision pair is between proposed objects,
         # the LLM has already failed to solve the layout numerically — use deterministic grid.
@@ -1009,7 +1056,7 @@ Rules:
         # Level-2 skill disclosure: the selected skill's full rules, whenever the LLM has to
         # do the skill's job itself (tool not applicable, or retry after verification failure).
         skill_context = ""
-        if skill:
+        if skill and (parsed_command.get('skill') or {}).get('applicable', True):
             skill_args = json.dumps(parsed_command['skill']['args'])
             if len(skill_args) > 500:  # e.g. graph_layout's edge list, already shown in full above
                 skill_args = "(see above)"

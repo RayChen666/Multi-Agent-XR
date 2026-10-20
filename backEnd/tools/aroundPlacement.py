@@ -1,6 +1,7 @@
 import math
 from typing import Dict, List, Optional
 
+from tools.aabbCheck import build_aabb
 from tools.orientation import facing_angle
 from tools.spacing import MIN_CLEARANCE, ROOM_MARGIN
 
@@ -32,12 +33,16 @@ def around_placement_positions(
     if not movers or not anchor:
         return []
 
-    ax = float(anchor.get('position', {}).get('x', 0))
-    az = float(anchor.get('position', {}).get('z', 0))
-
-    anc_col = anchor.get('collision') or {}
-    anc_hw = float(anc_col.get('width', 0.5)) / 2
-    anc_hd = float(anc_col.get('depth', 0.5)) / 2
+    # Ring centre = the anchor's box centre (collision offset and yaw applied), not its
+    # origin; a zero-size collision box (the user, skills._common.user_anchor) is a point.
+    if anchor.get('collision'):
+        a_min, a_max = build_aabb(anchor)
+        ax, az = (a_min[0] + a_max[0]) / 2, (a_min[2] + a_max[2]) / 2
+        anc_hw, anc_hd = (a_max[0] - a_min[0]) / 2, (a_max[2] - a_min[2]) / 2
+    else:
+        ax = float(anchor.get('position', {}).get('x', 0))
+        az = float(anchor.get('position', {}).get('z', 0))
+        anc_hw = anc_hd = 0.25
 
     mov_col = (movers[0].get('collision') or {})
     mov_hw = float(mov_col.get('width', 0.4)) / 2

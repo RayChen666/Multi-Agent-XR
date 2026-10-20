@@ -24,6 +24,16 @@ WALL_INSET = {
     'close_to':    0.25,
 }
 
+# "closer to" / "farther from" (proximityPlacement): each request keeps this fraction
+# of the edge-to-edge gap to the anchor (closer) or grows it by the same step (farther),
+# moving at least PROXIMITY_MIN_STEP when farther.
+PROXIMITY_RATIO = 0.5
+PROXIMITY_MIN_STEP = 0.3
+# Closest an object's edge may come to an anchor object's edge / to the user's
+# headset position projected on the floor (the user is a point, not a box).
+PROXIMITY_MIN_GAP = 0.1
+USER_MIN_GAP = 0.5
+
 # Hard minimum between an object's edge and any wall (every room-bounds clamp).
 ROOM_MARGIN = 0.05
 

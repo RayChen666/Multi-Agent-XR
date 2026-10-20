@@ -625,6 +625,10 @@ class Orchestrator:
         skill = get_registry().get((call or {}).get("name"))
         if not skill or placement.get("action") == "remove":
             return []
+        if not call.get("applicable", True):
+            # SceneAgent's run() gave up on this skill; its constraint does not describe the request.
+            print(f"   [SKILL {skill.name}] not applicable — LLM result not skill-checked")
+            return []
         try:
             violations = skill.postcondition(call["args"], placement, self._skill_context(state))
         except Exception as e:
@@ -805,6 +809,7 @@ class Orchestrator:
                 proposed.append({
                     **obj,
                     "position": transform["position"],  # use NEW position
+                    "rotation": transform.get("rotation") or obj.get("rotation"),  # and NEW yaw
                 })
 
         # existing scene excluding the moved objects themselves

@@ -621,7 +621,8 @@ class LanguageAgent:
                     parsed['resolved_spatial_target'] = None
 
                 registry = get_registry()
-                parsed['skill'] = registry.validate_call(parsed.get('skill')) or registry.infer_call(parsed)
+                parsed['skill'] = (registry.validate_call(parsed.get('skill'), prompt=prompt)
+                                   or registry.infer_call(parsed))
 
                 self._normalize_delete_intent(parsed, prompt)
                 self._normalize_resolved_spatial_target(parsed, gaze)
